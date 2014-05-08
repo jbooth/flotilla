@@ -1,14 +1,64 @@
-package raft
+package flotilla
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
-	"path"
+	"net"
+	"raft"
 	"time"
 )
+
+type opReq struct {
+	op    int
+	reqno uint64
+	b     *ByteArgs
+}
+
+func (r opReq) ToByteArgs() *ByteArgs {
+	out := &ByteArgs{make([][]byte, len(r.b.B)+2)}
+	out.B[0] = make([]byte, 4, 4)
+
+	binary.LittleEndian.PutUint32(out.B[0], uint32(r.op))
+	binary.LittleEndian.PutUint64(out.B[1], r.reqno)
+	for i := 0; i < len(r.b); i++ {
+		out.B[i+2] = r.b[i]
+	}
+	return out
+}
+
+func (r opReq) FromByteArgs(b *ByteArgs) {
+	r.op = int(binary.LittleEndian.Uint32(b.B[0]))
+	r.reqno = binary.LittleEndian.Uint64(b.B[1])
+	r.b = &ByteArgs{b.B[2:]}
+}
+
+type rawConn struct {
+	mLock   *sync.Mutex // guards response map
+	cLock   *sync.Mutex // guards conn
+	c       net.Conn
+	out     *bufio.Writer
+	reqId   uint64
+	pending map[uint64]chan Response
+}
+
+func (r *rawConn) req(r opReq) <-chan Response {
+	resp := make(chan Response, 1)
+	r.mLock.Lock()
+	r.reqId++
+
+	size := [4]byte{}
+	binary.Li
+}
+
+func (r *rawConn) readResponses() {
+	in := bufio.NewReaderSize(r.c, 64*1024)
+}
+
+type NetTransporter struct {
+	dial func(connectStr string) (net.Conn, error)
+}
 
 // Parts from this transporter were heavily influenced by Peter Bougon's
 // raft implementation: https://github.com/peterbourgon/raft
@@ -112,7 +162,7 @@ func (t *HTTPTransporter) Install(server Server, mux HTTPMuxer) {
 //--------------------------------------
 
 // Sends an AppendEntries RPC to a peer.
-func (t *HTTPTransporter) SendAppendEntriesRequest(server Server, peer *Peer, req *AppendEntriesRequest) *AppendEntriesResponse {
+func (t *HTTPTransporter) SendAppendEntriesRequest(server Server, peer *Peer, req *raft.AppendEntriesRequest) *raft.AppendEntriesResponse {
 	var b bytes.Buffer
 	if _, err := req.Encode(&b); err != nil {
 		traceln("transporter.ae.encoding.error:", err)
@@ -259,7 +309,7 @@ func (t *HTTPTransporter) appendEntriesHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		r.Body.Close()
+
 		resp := server.AppendEntries(req)
 		if resp == nil {
 			http.Error(w, "Failed creating response.", http.StatusInternalServerError)
@@ -282,7 +332,6 @@ func (t *HTTPTransporter) requestVoteHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		r.Body.Close()
 
 		resp := server.RequestVote(req)
 		if resp == nil {
@@ -306,7 +355,6 @@ func (t *HTTPTransporter) snapshotHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		r.Body.Close()
 
 		resp := server.RequestSnapshot(req)
 		if resp == nil {
@@ -330,7 +378,6 @@ func (t *HTTPTransporter) snapshotRecoveryHandler(server Server) http.HandlerFun
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		r.Body.Close()
 
 		resp := server.SnapshotRecoveryRequest(req, r.Body)
 		if resp == nil {
