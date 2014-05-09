@@ -1,3 +1,4 @@
+package flotilla
 
 type JoinCommand struct {
 	Name             string `json:"name"`

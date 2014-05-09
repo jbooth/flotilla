@@ -1,29 +1,24 @@
 package flotilla
 
 import (
-	"gomdb"
+	//"gomdb"
 	"net"
 )
 
 // Instantiates a new DB serving the ops provided, using the provided dataDir and listener
 // If ClusterAddrs is empty, we start as leader.  Otherwise, connect to the existing leader.
 func NewDB(
-	clusterAddrs []string, dataDir string, listen net.Listener, ops map[string]func(*ByteArgs) ([]byte, error)) (*DB, error) {
+	clusterAddrs []string, dataDir string, listen net.Listener, ops map[string]func(*ByteArgs) ([]byte, error)) (DB, error) {
 
-	return nil
+	return nil, nil
 }
 
-type DB struct {
+type server struct {
 	clusterAddrs []string
 	dataDir      string
-	env          *gomdb.Env
+	//env          *mdb.Env
 }
 
-type Response struct {
-	resp []byte
-	err  error
-}
-
-func (db *DB) Command(cmd string, args *ByteArgs) <-chan Response {
-
+func (s *server) Command(cmd string, args *ByteArgs) <-chan Result {
+	return nil
 }
