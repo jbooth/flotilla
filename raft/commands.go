@@ -1,78 +1,80 @@
 package raft
 
-import (
-	"io"
-)
+// AppendEntriesRequest is the command used to append entries to the
+// replicated log.
+type AppendEntriesRequest struct {
+	// Provide the current term and leader
+	Term   uint64
+	Leader []byte
 
-// Join command interface
-type JoinCommand interface {
-	Command
-	NodeName() string
+	// Provide the previous entries for integrity checking
+	PrevLogEntry uint64
+	PrevLogTerm  uint64
+
+	// New entries to commit
+	Entries []*Log
+
+	// Commit index on the leader
+	LeaderCommitIndex uint64
 }
 
-// Join command
-type DefaultJoinCommand struct {
-	Name             string `json:"name"`
-	ConnectionString string `json:"connectionString"`
+// AppendEntriesResponse is the response returned from an
+// AppendEntriesRequest.
+type AppendEntriesResponse struct {
+	// Newer term if leader is out of date
+	Term uint64
+
+	// Last Log is a hint to help accelerate rebuilding slow nodes
+	LastLog uint64
+
+	// We may not succeed if we have a conflicting entry
+	Success bool
 }
 
-// Leave command interface
-type LeaveCommand interface {
-	Command
-	NodeName() string
+// RequestVoteRequest is the command used by a candidate to ask a Raft peer
+// for a vote in an election.
+type RequestVoteRequest struct {
+	// Provide the term and our id
+	Term      uint64
+	Candidate []byte
+
+	// Used to ensure safety
+	LastLogIndex uint64
+	LastLogTerm  uint64
 }
 
-// Leave command
-type DefaultLeaveCommand struct {
-	Name string `json:"name"`
+// RequestVoteResponse is the response returned from a RequestVoteRequest.
+type RequestVoteResponse struct {
+	// Newer term if leader is out of date
+	Term uint64
+
+	// Return the peers, so that a node can shutdown on removal
+	Peers []byte
+
+	// Is the vote granted
+	Granted bool
 }
 
-// NOP command
-type NOPCommand struct {
+// InstallSnapshotRequest is the command sent to a Raft peer to bootstrap its
+// log (and state machine) from a snapshot on another peer.
+type InstallSnapshotRequest struct {
+	Term   uint64
+	Leader []byte
+
+	// These are the last index/term included in the snapshot
+	LastLogIndex uint64
+	LastLogTerm  uint64
+
+	// Peer Set in the snapshot
+	Peers []byte
+
+	// Size of the snapshot
+	Size int64
 }
 
-// The name of the Join command in the log
-func (c *DefaultJoinCommand) CommandName() string {
-	return "raft:join"
-}
-
-func (c *DefaultJoinCommand) Apply(server Server) (interface{}, error) {
-	err := server.AddPeer(c.Name, c.ConnectionString)
-
-	return []byte("join"), err
-}
-
-func (c *DefaultJoinCommand) NodeName() string {
-	return c.Name
-}
-
-// The name of the Leave command in the log
-func (c *DefaultLeaveCommand) CommandName() string {
-	return "raft:leave"
-}
-
-func (c *DefaultLeaveCommand) Apply(server Server) (interface{}, error) {
-	err := server.RemovePeer(c.Name)
-
-	return []byte("leave"), err
-}
-func (c *DefaultLeaveCommand) NodeName() string {
-	return c.Name
-}
-
-// The name of the NOP command in the log
-func (c NOPCommand) CommandName() string {
-	return "raft:nop"
-}
-
-func (c NOPCommand) Apply(server Server) (interface{}, error) {
-	return nil, nil
-}
-
-func (c NOPCommand) Encode(w io.Writer) error {
-	return nil
-}
-
-func (c NOPCommand) Decode(r io.Reader) error {
-	return nil
+// InstallSnapshotResponse is the response returned from an
+// InstallSnapshotRequest.
+type InstallSnapshotResponse struct {
+	Term    uint64
+	Success bool
 }

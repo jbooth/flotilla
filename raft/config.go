@@ -1,7 +1,78 @@
 package raft
 
+import (
+	"io"
+	"time"
+)
+
+// Config provides any necessary configuraiton to
+// the Raft server
 type Config struct {
-	CommitIndex uint64 `json:"commitIndex"`
-	// TODO decide what we need to store in peer struct
-	Peers []*Peer `json:"peers"`
+	// Time in follower state without a leader before we attempt an election
+	HeartbeatTimeout time.Duration
+
+	// Time in candidate state without a leader before we attempt an election
+	ElectionTimeout time.Duration
+
+	// Time without an Apply() operation before we heartbeat to ensure
+	// a timely commit. Due to random staggering, may be delayed as much as
+	// 2x this value.
+	CommitTimeout time.Duration
+
+	// MaxAppendEntries controls the maximum number of append entries
+	// to send at once. We want to strike a balance between efficiency
+	// and avoiding waste if the follower is going to reject because of
+	// an inconsistent log
+	MaxAppendEntries int
+
+	// If we are a member of a cluster, and RemovePeer is invoked for the
+	// local node, then we forget all peers and transition into the follower state.
+	// If ShutdownOnRemove is is set, we additional shutdown Raft. Otherwise,
+	// we can become a leader of a cluster containing only this node.
+	ShutdownOnRemove bool
+
+	// TrailingLogs controls how many logs we leave after a snapshot. This is
+	// used so that we can quickly replay logs on a follower instead of being
+	// forced to send an entire snapshot.
+	TrailingLogs uint64
+
+	// SnapshotInterval controls how often we check if we should perform a snapshot.
+	// We randomly stagger between this value and 2x this value to avoid the entire
+	// cluster from performing a snapshot at once
+	SnapshotInterval time.Duration
+
+	// SnapshotThreshold controls how many outstanding logs there must be before
+	// we perform a snapshot. This is to prevent excessive snapshots when we can
+	// just replay a small set of logs.
+	SnapshotThreshold uint64
+
+	// EnableSingleMode allows for a single node mode of operation. This
+	// is false by default, which prevents a lone node from electing itself
+	// leader.
+	EnableSingleNode bool
+
+	// LeaderLeaveTimeout is used to control how long the "lease" lasts
+	// for being the leader without being able to contact a quorum
+	// of nodes. If we reach this interval without contact, we will
+	// step down as leader.
+	LeaderLeaseTimeout time.Duration
+
+	// LogOutput is used as a sink for logs. Defaults to os.Stderr.
+	LogOutput io.Writer
+}
+
+// DefaultConfig returns a Config with usable defaults.
+func DefaultConfig() *Config {
+	return &Config{
+		HeartbeatTimeout:   1000 * time.Millisecond,
+		ElectionTimeout:    1000 * time.Millisecond,
+		CommitTimeout:      50 * time.Millisecond,
+		MaxAppendEntries:   64,
+		ShutdownOnRemove:   true,
+		TrailingLogs:       10240,
+		SnapshotInterval:   120 * time.Second,
+		SnapshotThreshold:  8192,
+		EnableSingleNode:   false,
+		LeaderLeaseTimeout: 500 * time.Millisecond,
+	}
 }

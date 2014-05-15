@@ -1,17 +1,17 @@
-COVERPROFILE=cover.out
-
-default: test
-
-cover:
-	go test -coverprofile=$(COVERPROFILE) .
-	go tool cover -html=$(COVERPROFILE)
-	rm $(COVERPROFILE)
-
-dependencies:
-	go get -d .
+DEPS = $(go list -f '{{range .TestImports}}{{.}} {{end}}' ./...)
 
 test:
-	go test -i ./...
-	go test -v ./...
+	go test -timeout=3s ./...
 
-.PHONY: coverage dependencies test
+integ: test
+	INTEG_TESTS=yes go test -timeout=3s -run=Integ ./...
+
+deps:
+	go get -d -v ./...
+	echo $(DEPS) | xargs -n1 go get -d
+
+cov:
+	INTEG_TESTS=yes gocov test github.com/hashicorp/raft | gocov-html > /tmp/coverage.html
+	open /tmp/coverage.html
+
+.PNONY: test cov integ deps

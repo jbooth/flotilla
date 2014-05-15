@@ -1,138 +1,85 @@
-go-raft [![Build Status](https://drone.io/github.com/goraft/raft/status.png)](https://drone.io/github.com/goraft/raft/latest) [![Coverage Status](https://coveralls.io/repos/goraft/raft/badge.png?branch=master)](https://coveralls.io/r/goraft/raft?branch=master)
-=======
+raft [![Build Status](https://travis-ci.org/hashicorp/raft.png)](https://travis-ci.org/hashicorp/raft)
+====
 
-## Overview
+raft is a [Go](http://www.golang.org) library that manages a replicated
+log and can be used with an FSM to manage replicated state machines. It
+is library for providing [consensus](http://en.wikipedia.org/wiki/Consensus_(computer_science)).
 
-This is a Go implementation of the Raft distributed consensus protocol.
-Raft is a protocol by which a cluster of nodes can maintain a replicated state machine.
-The state machine is kept in sync through the use of a replicated log.
+The use cases for such a library are far-reaching as replicated state
+machines are a key component of many distributed systems. They enable
+building Consistent, Partition Tolerant (CP) systems, with limited
+fault tolerance as well.
 
-For more details on Raft, you can read [In Search of an Understandable Consensus Algorithm][raft-paper] by Diego Ongaro and John Ousterhout.
+## Building
 
-## Project Status
+If you wish to build raft you'll need Go version 1.2+ installed.
 
-This library is feature complete but should be considered experimental until it has seen more usage.
-If you have any questions on implementing go-raft in your project please file an issue.
-There is an [active community][community] of developers who can help.
-go-raft is under the MIT license.
+Please check your installation with:
 
-[community]: https://github.com/goraft/raft/contributors
+```
+go version
+```
 
-### Features
+## Documentation
 
-- Leader election
-- Log replication
-- Configuration changes
-- Log compaction
-- Unit tests
-- Fast Protobuf Log Encoding
-- HTTP transport
+For complete documentation, see the associated [Godoc](http://godoc.org/github.com/hashicorp/raft).
 
-### Projects
+To prevent complications with cgo, the primary backend `MDBStore` is in a seperate repositoy,
+called [raft-mdb](http://github.com/hashicorp/raft-mdb). That is the recommended implementation
+for the `LogStore` and `StableStore`.
 
-These projects are built on go-raft:
+## Protocol
 
-- [coreos/etcd](https://github.com/coreos/etcd) - A highly-available key value store for shared configuration and service discovery.
-- [goraft/raftd](https://github.com/goraft/raftd) - A reference implementation for using the go-raft library for distributed consensus.
-- [skynetservices/skydns](https://github.com/skynetservices/skydns) - DNS for skynet or any other service discovery.
-- [influxdb/influxdb](https://github.com/influxdb/influxdb) - An open-source, distributed, time series, events, and metrics database.
-- [Weed File System](https://weed-fs.googlecode.com) - A scalable distributed key-to-file system with O(1) disk access for each read.
+raft is based on ["Raft: In Search of an Understandable Consensus Algorithm"](https://ramcloud.stanford.edu/wiki/download/attachments/11370504/raft.pdf)
 
-If you have a project that you're using go-raft in, please add it to this README so others can see implementation examples.
+A high level overview of the Raft protocol is described below, but for details please read the full
+[Raft paper](https://ramcloud.stanford.edu/wiki/download/attachments/11370504/raft.pdf)
+followed by the raft source. Any questions about the raft protocol should be sent to the
+[raft-dev mailing list](https://groups.google.com/forum/#!forum/raft-dev).
 
-## Contact and Resources
+### Protocol Description
 
-- [raft-dev][raft-dev] is a mailing list for discussion about best practices
-  and implementation of Raft. Not goraft specific but helpful if you have
-  questions.
-- [Slides from Ben's talk][bens-talk] which includes easy to understand
-  diagrams of leader election and replication
-- The [Raft Consensus homepage][raft-home] has links to additional raft
-  implementations, slides to talks on Raft and general information
+Raft nodes are always in one of three states: follower, candidate or leader. All
+nodes initially start out as a follower. In this state, nodes can accept log entries
+from a leader and cast votes. If no entries are received for some time, nodes
+self-promote to the candidate state. In the candidate state nodes request votes from
+their peers. If a candidate receives a quorum of votes, then it is promoted to a leader.
+The leader must accept new log entries and replicate to all the other followers.
+In addition, if stale reads are not acceptable, all queries must also be performed on
+the leader.
 
-[raft-home]:  http://raftconsensus.github.io/
-[raft-dev]: https://groups.google.com/forum/#!forum/raft-dev
-[bens-talk]: https://speakerdeck.com/benbjohnson/raft-the-understandable-distributed-consensus-protocol
+Once a cluster has a leader, it is able to accept new log entries. A client can
+request that a leader append a new log entry, which is an opaque binary blob to
+Raft. The leader then writes the entry to durable storage and attempts to replicate
+to a quorum of followers. Once the log entry is considered *committed*, it can be
+*applied* to a finite state machine. The finite state machine is application specific,
+and is implemented using an interface.
 
-## The Raft Protocol
+An obvious question relates to the unbounded nature of a replicated log. Raft provides
+a mechanism by which the current state is snapshotted, and the log is compacted. Because
+of the FSM abstraction, restoring the state of the FSM must result in the same state
+as a replay of old logs. This allows Raft to capture the FSM state at a point in time,
+and then remove all the logs that were used to reach that state. This is performed automatically
+without user intervention, and prevents unbounded disk usage as well as minimizing
+time spent replaying logs.
 
-This section provides a summary of the Raft protocol from a high level.
-For a more detailed explanation on the failover process and election terms please see the full paper describing the protocol: [In Search of an Understandable Consensus Algorithm][raft-paper].
+Lastly, there is the issue of updating the peer set when new servers are joining
+or existing servers are leaving. As long as a quorum of nodes is available, this
+is not an issue as Raft provides mechanisms to dynamically update the peer set.
+If a quorum of nodes is unavailable, then this becomes a very challenging issue.
+For example, suppose there are only 2 peers, A and B. The quorum size is also
+2, meaning both nodes must agree to commit a log entry. If either A or B fails,
+it is now impossible to reach quorum. This means the cluster is unable to add,
+or remove a node, or commit any additional log entries. This results in *unavailability*.
+At this point, manual intervention would be required to remove either A or B,
+and to restart the remaining node in bootstrap mode.
 
-### Overview
+A Raft cluster of 3 nodes can tolerate a single node failure, while a cluster
+of 5 can tolerate 2 node failures. The recommended configuration is to either
+run 3 or 5 raft servers. This maximizes availability without
+greatly sacrificing performance.
 
-Maintaining state in a single process on a single server is easy.
-Your process is a single point of authority so there are no conflicts when reading and writing state.
-Even multi-threaded processes can rely on locks or coroutines to serialize access to the data.
+In terms of performance, Raft is comprable to Paxos. Assuming stable leadership,
+a committing a log entry requires a single round trip to half of the cluster.
+Thus performance is bound by disk I/O and network latency.
 
-However, in a distributed system there is no single point of authority.
-Servers can crash or the network between two machines can become unavailable or any number of other problems can occur.
-
-A distributed consensus protocol is used for maintaining a consistent state across multiple servers in a cluster.
-Many distributed systems are built upon the Paxos protocol but Paxos can be difficult to understand and there are many gaps between Paxos and real world implementation.
-
-An alternative is the [Raft distributed consensus protocol][raft-paper] by Diego Ongaro and John Ousterhout.
-Raft is a protocol built with understandability as a primary tenet and it centers around two things:
-
-1. Leader Election
-2. Replicated Log
-
-With these two constructs, you can build a system that can maintain state across multiple servers -- even in the event of multiple failures.
-
-### Leader Election
-
-The Raft protocol effectively works as a master-slave system whereby state changes are written to a single server in the cluster and are distributed out to the rest of the servers in the cluster.
-This simplifies the protocol since there is only one data authority and conflicts will not have to be resolved.
-
-Raft ensures that there is only one leader at a time.
-It does this by performing elections among the nodes in the cluster and requiring that a node must receive a majority of the votes in order to become leader.
-For example, if you have 3 nodes in your cluster then a single node would need 2 votes in order to become the leader.
-For a 5 node cluster, a server would need 3 votes to become leader.
-
-### Replicated Log
-
-To maintain state, a log of commands is maintained.
-Each command makes a change to the state of the server and the command is deterministic.
-By ensuring that this log is replicated identically between all the nodes in the cluster we can replicate the state at any point in time in the log by running each command sequentially.
-
-Replicating the log under normal conditions is done by sending an `AppendEntries` RPC from the leader to each of the other servers in the cluster (called Peers).
-Each peer will append the entries from the leader through a 2-phase commit process which ensure that a majority of servers in the cluster have entries written to log.
-
-
-## Raft in Practice
-
-### Optimal Cluster Size
-
-The primary consideration when choosing the node count in your Raft cluster is the number of nodes that can simultaneously fail.
-Because Raft requires a majority of nodes to be available to make progress, the number of node failures the cluster can tolerate is `(n / 2) - 1`.
-
-This means that a 3-node cluster can tolerate 1 node failure.
-If 2 nodes fail then the cluster cannot commit entries or elect a new leader so progress stops.
-A 5-node cluster can tolerate 2 node failures. A 9-node cluster can tolerate 4 node failures.
-It is unlikely that 4 nodes will simultaneously fail so clusters larger than 9 nodes are not common.
-
-Another consideration is performance.
-The leader must replicate log entries for each follower node so CPU and networking resources can quickly be bottlenecked under stress in a large cluster.
-
-
-### Scaling Raft
-
-Once you grow beyond the maximum size of your cluster there are a few options for scaling Raft:
-
-1. *Core nodes with dumb replication.*
-   This option requires you to maintain a small cluster (e.g. 5 nodes) that is involved in the Raft process and then replicate only committed log entries to the remaining nodes in the cluster.
-   This works well if you have reads in your system that can be stale.
-
-2. *Sharding.*
-   This option requires that you segment your data into different clusters.
-   This option works well if you need very strong consistency and therefore need to read and write heavily from the leader.
-
-If you have a very large cluster that you need to replicate to using Option 1 then you may want to look at performing hierarchical replication so that nodes can better share the load.
-
-
-## History
-
-Ben Johnson started this library for use in his behavioral analytics database called [Sky](https://github.com/skydb/sky).
-He put it under the MIT license in the hopes that it would be useful for other projects too.
-
-[raft-paper]: https://ramcloud.stanford.edu/wiki/download/attachments/11370504/raft.pdf

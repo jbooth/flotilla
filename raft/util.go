@@ -1,124 +1,184 @@
 package raft
 
 import (
-	"code.google.com/p/gogoprotobuf/proto"
+	"bytes"
+	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math/rand"
-	"os"
+	"net"
 	"time"
+
+	"github.com/ugorji/go/codec"
 )
 
-// encode marshaler with length prepended, doesn't close stream
-func encode(p proto.Marshaler, w io.Writer) (n int, err error) {
-	b, err := p.Marshal()
+// randomTimeout returns a value that is between the minVal and 2x minVal
+func randomTimeout(minVal time.Duration) <-chan time.Time {
+	if minVal == 0 {
+		return nil
+	}
+	extra := (time.Duration(rand.Int63()) % minVal)
+	return time.After(minVal + extra)
+}
+
+// min returns the minimum.
+func min(a, b uint64) uint64 {
+	if a <= b {
+		return a
+	}
+	return b
+}
+
+// max returns the maximum
+func max(a, b uint64) uint64 {
+	if a >= b {
+		return a
+	}
+	return b
+}
+
+// generateUUID is used to generate a random UUID
+func generateUUID() string {
+	buf := make([]byte, 16)
+	if _, err := crand.Read(buf); err != nil {
+		panic(fmt.Errorf("failed to read random bytes: %v", err))
+	}
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%12x",
+		buf[0:4],
+		buf[4:6],
+		buf[6:8],
+		buf[8:10],
+		buf[10:16])
+}
+
+// asyncNotify is used to do an async channel send to
+// a list of channels. This will not block.
+func asyncNotify(chans []chan struct{}) {
+	for _, ch := range chans {
+		asyncNotifyCh(ch)
+	}
+}
+
+// asyncNotifyCh is used to do an async channel send
+// to a singel channel without blocking.
+func asyncNotifyCh(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+// asyncNotifyBool is used to do an async notification
+// on a bool channel
+func asyncNotifyBool(ch chan bool, v bool) {
+	select {
+	case ch <- v:
+	default:
+	}
+}
+
+// ExcludePeer is used to exclude a single peer from a list of peers
+func ExcludePeer(peers []net.Addr, peer net.Addr) []net.Addr {
+	otherPeers := make([]net.Addr, 0, len(peers))
+	for _, p := range peers {
+		if p.String() != peer.String() {
+			otherPeers = append(otherPeers, p)
+		}
+	}
+	return otherPeers
+}
+
+// PeerContained checks if a given peer is contained in a list
+func PeerContained(peers []net.Addr, peer net.Addr) bool {
+	for _, p := range peers {
+		if p.String() == peer.String() {
+			return true
+		}
+	}
+	return false
+}
+
+// AddUniquePeer is used to add a peer to a list of existing
+// peers only if it is not already contained
+func AddUniquePeer(peers []net.Addr, peer net.Addr) []net.Addr {
+	if PeerContained(peers, peer) {
+		return peers
+	}
+	return append(peers, peer)
+}
+
+// encodePeers is used to serialize a list of peers
+func encodePeers(peers []net.Addr, trans Transport) []byte {
+	// Encode each peer
+	var encPeers [][]byte
+	for _, p := range peers {
+		encPeers = append(encPeers, trans.EncodePeer(p))
+	}
+
+	// Encode the entire array
+	buf, err := encodeMsgPack(encPeers)
 	if err != nil {
-		return -1, err
+		panic(fmt.Errorf("failed to encode peers: %v", err))
 	}
-	length := make([]byte, 4, 4)
-	binary.LittleEndian.PutUint32(length, uint32(len(b)))
-	nWrit := 0
-	for nWrit < 4 {
-		w, err := w.Write(length[nWrit:])
-		if w > 0 {
-			nWrit += w
-		}
-		if err != nil {
-			return nWrit, err
-		}
-	}
-	nWrit = 0
-	for nWrit < len(b) {
-		w, err := w.Write(b[nWrit:])
-		if w > 0 {
-			nWrit += w
-		}
-		if err != nil {
-			return nWrit + 4, err
-		}
-	}
-	return nWrit + 4, nil
+
+	return buf.Bytes()
 }
 
-// decode marshaler with length prepended, doesn't rely on stream close
-func decode(p proto.Unmarshaler, r io.Reader) (n int, err error) {
-	length := make([]byte, 4, 4)
-	nRead := 0
-	for nRead < 4 {
-		r, err := r.Read(length[nRead:])
-		if r > 0 {
-			nRead += r
-		}
-		if err != nil {
-			return nRead, err
-		}
+// decodePeers is used to deserialie a list of peers
+func decodePeers(buf []byte, trans Transport) []net.Addr {
+	// Decode the buffer first
+	var encPeers [][]byte
+	if err := decodeMsgPack(buf, &encPeers); err != nil {
+		panic(fmt.Errorf("failed to decode peers: %v", err))
 	}
-	buffLen := int(binary.LittleEndian.Uint32(length))
-	b := make([]byte, buffLen, buffLen)
-	nRead = 0
-	for nRead < buffLen {
-		r, err := r.Read(b[nRead:])
-		if r > 0 {
-			nRead += r
-		}
-		if err != nil {
-			return nRead + 4, err
-		}
+
+	// Deserialize each peer
+	var peers []net.Addr
+	for _, enc := range encPeers {
+		peers = append(peers, trans.DecodePeer(enc))
 	}
-	err = p.Unmarshal(b)
-	return nRead + 4, err
+
+	return peers
 }
 
-// uint64Slice implements sort interface
-type uint64Slice []uint64
-
-func (p uint64Slice) Len() int           { return len(p) }
-func (p uint64Slice) Less(i, j int) bool { return p[i] < p[j] }
-func (p uint64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-
-// WriteFile writes data to a file named by filename.
-// If the file does not exist, WriteFile creates it with permissions perm;
-// otherwise WriteFile truncates it before writing.
-// This is copied from ioutil.WriteFile with the addition of a Sync call to
-// ensure the data reaches the disk.
-func writeFileSynced(filename string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	defer f.Close() // Idempotent
-
-	n, err := f.Write(data)
-	if err == nil && n < len(data) {
-		return io.ErrShortWrite
-	} else if err != nil {
-		return err
-	}
-
-	if err = f.Sync(); err != nil {
-		return err
-	}
-
-	return f.Close()
+// Decode reverses the encode operation on a byte slice input
+func decodeMsgPack(buf []byte, out interface{}) error {
+	r := bytes.NewBuffer(buf)
+	hd := codec.MsgpackHandle{}
+	dec := codec.NewDecoder(r, &hd)
+	return dec.Decode(out)
 }
 
-// Waits for a random time between two durations and sends the current time on
-// the returned channel.
-func afterBetween(min time.Duration, max time.Duration) <-chan time.Time {
-	rand := rand.New(rand.NewSource(time.Now().UnixNano()))
-	d, delta := min, (max - min)
-	if delta > 0 {
-		d += time.Duration(rand.Int63n(int64(delta)))
-	}
-	return time.After(d)
+// Encode writes an encoded object to a new bytes buffer
+func encodeMsgPack(in interface{}) (*bytes.Buffer, error) {
+	buf := bytes.NewBuffer(nil)
+	hd := codec.MsgpackHandle{}
+	enc := codec.NewEncoder(buf, &hd)
+	err := enc.Encode(in)
+	return buf, err
 }
 
-// TODO(xiangli): Remove assertions when we reach version 1.0
+// Converts bytes to an integer
+func bytesToUint64(b []byte) uint64 {
+	return binary.BigEndian.Uint64(b)
+}
 
-// _assert will panic with a given formatted message if the given condition is false.
-func _assert(condition bool, msg string, v ...interface{}) {
-	if !condition {
-		panic(fmt.Sprintf("assertion failed: "+msg, v...))
+// Converts a uint to a byte slice
+func uint64ToBytes(u uint64) []byte {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, u)
+	return buf
+}
+
+// backoff is used to compute an exponential backoff
+// duration. Base time is scaled by the current round,
+// up to some maximum scale factor.
+func backoff(base time.Duration, round, limit uint64) time.Duration {
+	power := min(round, limit)
+	for power > 2 {
+		base *= 2
+		power--
 	}
+	return base
 }
