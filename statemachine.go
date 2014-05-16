@@ -37,6 +37,14 @@ func (f *FlotillaState) Snapshot() (raft.FSMSnapshot, error) {
 
 // Apply log is invoked once a log entry is commited
 func (f *FlotillaState) Apply(l *raft.Log) interface{} {
+	cmd := &commandReq{}
+	err := decodeMsgPack(l.Data, cmd)
+	if err != nil {
+		return Result{[]byte{}, err}
+	}
+	// open write txn
+	// execute command, get results
+	// check for callback
 	return nil
 }
 

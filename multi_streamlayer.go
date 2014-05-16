@@ -2,9 +2,11 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -16,95 +18,74 @@ var (
 	code_flotilla      = 2 // used to connect to flotilla upon accept()
 )
 
-// binds to a socket and uses normal TCP for all ops
-func NewTCPTransportStandard(
+// For each unique serviceCode provided, returns a transport layer with accept()
+// and dial() functions by connecting to the provided addr and 'dialing' the byte.
+//
+// Connections are obtained from the returned transport layer's net.Listener interface.
+func NewStdMultiStream(
 	bindAddr string,
-	advertise net.Addr,
-	maxPool int,
-	timeout time.Duration,
-	logOutput io.Writer,
+	lg log.Logger,
+	serviceCodes ...byte,
 ) (*NetworkTransport, error) {
 	// Try to bind
 	list, err := net.Listen("tcp", bindAddr)
 	if err != nil {
 		return nil, err
 	}
-	return NewTCPTransport(list, defaultDialer,
-		advertise, maxPool, timeout, logOutput)
-}
-
-// Uses the provided list and dial functions, can be used to layer over another protocol
-func NewTCPTransportCustom(
-	list net.Listener,
-	dial func(net.Addr, time.Duration) (net.Conn, error),
-	advertise net.Addr,
-	maxPool int,
-	timeout time.Duration,
-	logOutput io.Writer,
-) (*NetworkTransport, error) {
-
-	// sanity checks for listener and advertised address
-	tcpBindAddr, ok := list.Addr().(*net.TCPAddr)
-	if !ok {
-		log.Printf("TCPTransport Warning: listener on non TCP address %s", advertise)
-	} else if tcpBindAddr.IP.IsUnspecified() {
-		log.Printf("TCPTransport Warning, listener on non advertisable IP: %s", tcpAdvertise.IP)
-	}
-	if advertise != nil {
-		tcpAdvertise, ok := advertise.(*net.TCPAddr)
-		if !ok {
-			log.Printf("TCPTransport Warning: advertising non TCP address %s", advertise)
-		} else if tcpAdvertise.IP.IsUnspecified() {
-			log.Printf("TCPTransport Warning, non advertisable IP: %s", tcpAdvertise.IP)
-		}
-	}
-
-	// Create stream layer for raft
-	raftStream := &TCPStreamLayer{
-		advertise: advertise,
-		listener:  list,
-		dialer: func(a net.Addr, t time.Duration) (net.Conn, error) {
-			return dialWithCode(dial, code_raft, a, t)
-		},
-	}
-
-	// Create the raft network transport
-	trans := NewNetworkTransport(stream, maxPool, timeout, logOutput)
-	return trans, nil
-}
-
-type FlotillaCommandClient struct {
-	dialer func(a net.Addr, t time.Duration) (net.Conn, error)
-	conns  map[net.Addr]conn
-	l      *sync.Mutex
-}
-
-type flotillaCommandClientConn struct {
+	return NewMultiStream(list, defaultDialer,
+		list.Addr(), lg, serviceCodes)
 }
 
 func defaultDialer(a net.Addr, t time.Duration) (net.Conn, error) {
-	return net.DialTimeout(a, t)
+	return net.DialTimeout("tcp", a, t)
 }
 
-func dialWithCode(dialer func(net.Addr, time.Duration) (net.Conn, error), code byte, address net.Addr, timeout net.Timeout) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", address, timeout)
-	if err != nil {
-		return nil, err
+// Uses the provided list and dial functions, can be used to allow flotilla
+// to share a bound port with another binary service.
+func NewMultiStream(
+	list net.Listener,
+	dial func(net.Addr, time.Duration) (net.Conn, error),
+	advertise net.Addr,
+	lg *log.Logger,
+	serviceCodes ...byte,
+) (map[byte]raft.StreamLayer, error) {
+	// sanity checks for listener and advertised address
+	if advertise == nil {
+		advertise = list.Addr()
 	}
-	_, err := conn.Write([]byte{code})
-	if err != nil {
-		conn.Close()
-		return nil, err
+	tcpAdvertise, ok := advertise.(*net.TCPAddr)
+	if !ok {
+		log.Printf(logOutput, "NewMultiStream Warning: advertising non TCP address %s", advertise)
+	} else if tcpAdvertise.IP.IsUnspecified() {
+		log.Printf(logOutput, "NewMultiStream Warning: advertising unspecified IP: %s", tcpAdvertise.IP)
 	}
-	return conn, nil
+	// set up router
+	r := &router{listen, make(chan net.Conn, 16), make(chan closeReq, 16), make(map[byte]*serviceStreams), lg}
+	// set up a channel of conns for each unique serviceCode
+	for _, b := range opCodes {
+		_, exists := services[b]
+		if exists {
+			continue
+		}
+		r.chans[b] = &serviceStreams{
+			r:      r,
+			addr:   advertise,
+			conns:  make(chan net.Conn, 16),
+			closed: false,
+			myCode: b,
+			dial:   dial,
+		}
+	}
+	go r.serve()
+	return r.chans, nil
 }
 
 type router struct {
 	listen        net.Listener
 	newConns      chan net.Conn
 	closeRequests chan closeReq
-	chans         map[byte]*chanListener
-	l             *sync.RWMutex
+	chans         map[byte]*serviceStreams
+	lg            *log.Logger
 }
 
 func (r *router) serve() {
@@ -113,7 +94,7 @@ func (r *router) serve() {
 		for {
 			conn, err := r.listen.Accept()
 			if err != nil {
-				log.Printf("router.serve(): Error accepting on %s : %s", r.listen.Addr(), err)
+				r.lg.Printf("router.serve(): Error accepting on %s : %s", r.listen.Addr(), err)
 				return
 			}
 			r.newConns <- conn
@@ -125,13 +106,13 @@ func (r *router) serve() {
 		select {
 		case conn, ok := <-r.newConns:
 			if !ok {
-				log.Printf("Router closed, ending accept loop")
+				r.lg.Printf("Router closed, ending accept loop")
 				return
 			}
 
 			_, err := conn.Read(code)
 			if err != nil {
-				log.Printf("Error reading from conn %s, discarding.  Error: %s", conn.RemoteAddr(), err)
+				r.lg.Printf("Error reading from conn %s, discarding.  Error: %s", conn.RemoteAddr(), err)
 				conn.Close()
 				continue
 			}
@@ -148,16 +129,34 @@ type closeReq struct {
 	code byte
 	resp chan bool
 }
-type chanListener struct {
+
+func dialWithCode(dialer func(net.Addr, time.Duration) (net.Conn, error), code byte, address net.Addr, timeout net.Timeout) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", address, timeout)
+	if err != nil {
+		return nil, err
+	}
+	_, err := conn.Write([]byte{code})
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// serviceStreams implements raft.StreamLayer interface for a given service code
+// we dial to remote hosts by connecting and then sending the code
+// we accept conns through the router that created us, by code
+type serviceStreams struct {
 	r      *router
 	addr   net.Addr
 	conns  chan net.Conn
 	closed bool
 	myCode byte
+	dial   func(address net.Addr, timeout time.Duration) (net.Conn, error)
 }
 
 // Accept waits for and returns the next connection to the listener.
-func (c *chanListener) Accept() (c net.Conn, err error) {
+func (c *serviceStreams) Accept() (c net.Conn, err error) {
 	c, ok := <-c.conns
 	if !ok {
 		return nil, fmt.Errorf("Tried to accept from closed chan on %s", c.addr)
@@ -167,7 +166,7 @@ func (c *chanListener) Accept() (c net.Conn, err error) {
 
 // Close closes the listener.
 // Any blocked Accept operations will be unblocked and return errors.
-func (c *chanListener) Close() error {
+func (c *serviceStreams) Close() error {
 	req := closeReq{
 		c.myCode,
 		make(chan bool, 1),
@@ -178,8 +177,13 @@ func (c *chanListener) Close() error {
 }
 
 // Addr returns the listener's network address.
-func (c *chanListener) Addr() Addr {
+func (c *serviceStreams) Addr() Addr {
 	return c.addr
+}
+
+// connects to the service listening on
+func (c *serviceStreams) Dial(address net.Addr, timeout time.Duration) (net.Conn, error) {
+	return dialWithCode(c.dial, c.myCode, address, timeout)
 }
 
 // TCPStreamLayer implements raft.StreamLayer interface

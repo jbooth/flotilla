@@ -93,7 +93,7 @@ func NewDB(
 	return s, nil
 }
 
-func newRaft(path string, streams raft.StreamLayer) (*raft.Raft, error) {
+func newRaft(path string, streams raft.StreamLayer, state raft.FSM, bootstrap bool) (*raft.Raft, error) {
 	// Create the MDB store for logs and stable storage, retain up to 8gb
 	store, err := raftmdb.NewMDBStoreWithSize(path, 8*1024*1024*1024)
 	if err != nil {
@@ -114,23 +114,26 @@ func newRaft(path string, streams raft.StreamLayer) (*raft.Raft, error) {
 	raftPeers := raft.NewJSONPeers(path, trans)
 
 	// Ensure local host is always included if we are in bootstrap mode
-	peers, err := s.raftPeers.Peers()
-	if err != nil {
-		store.Close()
-		return err
-	}
-	if !raft.PeerContained(peers, trans.LocalAddr()) {
-		s.raftPeers.SetPeers(raft.AddUniquePeer(peers, trans.LocalAddr()))
+	if bootstrap {
+		peers, err := s.raftPeers.Peers()
+		if err != nil {
+			store.Close()
+			return err
+		}
+		if !raft.PeerContained(peers, trans.LocalAddr()) {
+			s.raftPeers.SetPeers(raft.AddUniquePeer(peers, trans.LocalAddr()))
+		}
 	}
 
 	// Setup the Raft store
-	s.raft, err = raft.NewRaft(raft.DefaultConfig(), s.fsm, store, store,
+	raft, err := raft.NewRaft(raft.DefaultConfig(), state, store, store,
 		snapshots, raftPeers, trans)
 	if err != nil {
 		store.Close()
 		trans.Close()
-		return err
+		return nil, err
 	}
+	return raft, nil
 }
 
 type server struct {

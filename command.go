@@ -22,6 +22,11 @@ func (r *RaftLeaderCommandReq) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func (r *RaftLeaderCommandReq) UnmarshalBinary(data []byte) error {
+	return decodeMsgPack(data, r)
+}
+
+// exported for visibility to encoding utils
 type RaftLeaderCommandResp struct {
 	Reqno uint64
 	Err   error
