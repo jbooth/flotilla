@@ -1,10 +1,12 @@
 package flotilla
 
 import (
-	"github.com/jbooth/flotilla/gomdb"
+	"fmt"
+	"github.com/jbooth/flotilla/mdb"
 	"github.com/jbooth/flotilla/raft"
 	"io"
 	"log"
+	"os"
 	"sync"
 	"syscall"
 )
@@ -21,13 +23,12 @@ type FlotillaState struct {
 	reqnoCtr       uint64
 	dbPath         string
 	localCallbacks map[uint64]*commandCallback
-	reqnoCtr       uint64
 	l              *sync.Mutex // guards callbacks and reqnoCtr
 	lg             *log.Logger
 }
 
-func NewFlotillaState(dbPath string, commands map[string]Command) {
-
+func NewFlotillaState(dbPath string, commands map[string]Command) (*FlotillaState, error) {
+	return nil, nil
 }
 
 // Apply log is invoked once a log entry is commited
@@ -98,7 +99,7 @@ type FlotillaSnapshot struct {
 // starts streaming snapshot into one end of pipe
 func (s *FlotillaSnapshot) pipeCopy() {
 	defer s.pipeW.Close()
-	s.copyErr <- env.CopyFd(pipeW.Fd()) // buffered chan here
+	s.copyErr <- env.CopyFd(s.pipeW.Fd()) // buffered chan here
 }
 
 // pulls
@@ -106,11 +107,11 @@ func (s *FlotillaSnapshot) pipeCopy() {
 // and invoke close when finished or call Cancel on error.
 func (s *FlotillaSnapshot) Persist(sink raft.SnapshotSink) error {
 	defer sink.Close()
-	defer pipeR.Close()
-	e1 := io.Copy(pipeR, sink)
+	defer s.pipeR.Close()
+	_, e1 := io.Copy(sink, s.pipeR)
 	e2 := <-s.copyErr
 	if e2 != nil {
-		return fmt.Sprintf("Error copying snapshot to pipe: %s", e2)
+		return fmt.Errorf("Error copying snapshot to pipe: %s", e2)
 	}
 	return e1
 }
@@ -126,14 +127,13 @@ func (s *FlotillaSnapshot) Release() {
 // Note, this command is called concurrently with open read txns, so we handle that
 func (f *FlotillaState) Restore(in io.ReadCloser) error {
 	// stream to filePath.tmp
-	tempPath = f.dbPath + ".tmp"
-	f, err := os.OpenFile(tempPath, os.WR_ONLY, 0755)
+	tempPath := f.dbPath + ".tmp"
+	tempFile, err := os.OpenFile(tempPath, os.O_WRONLY, 0755)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	err = io.Copy(f, in)
-	if err = io.Copy(f, in); err != nil {
+	defer tempFile.Close()
+	if _, err = io.Copy(tempFile, in); err != nil {
 		return err
 	}
 	f.l.Lock()

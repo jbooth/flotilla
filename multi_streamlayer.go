@@ -3,11 +3,9 @@ package flotilla
 import (
 	"errors"
 	"fmt"
-	"io"
+	"github.com/jbooth/flotilla/raft"
 	"log"
 	"net"
-	"os"
-	"sync"
 	"time"
 )
 
@@ -17,6 +15,7 @@ var (
 	code_raft          = 1 // used to connect to raft upon accept()
 	code_flotilla      = 2 // used to connect to flotilla upon accept()
 )
+var typeCheck raft.StreamLayer = &serviceStreams{}
 
 // For each unique serviceCode provided, returns a transport layer with accept()
 // and dial() functions by connecting to the provided addr and 'dialing' the byte.
@@ -24,47 +23,48 @@ var (
 // Connections are obtained from the returned transport layer's net.Listener interface.
 func NewStdMultiStream(
 	bindAddr string,
-	lg log.Logger,
+	lg *log.Logger,
 	serviceCodes ...byte,
-) (*NetworkTransport, error) {
+) (map[byte]raft.StreamLayer, error) {
 	// Try to bind
 	list, err := net.Listen("tcp", bindAddr)
 	if err != nil {
 		return nil, err
 	}
 	return NewMultiStream(list, defaultDialer,
-		list.Addr(), lg, serviceCodes)
+		list.Addr(), lg, serviceCodes...)
 }
 
-func defaultDialer(a net.Addr, t time.Duration) (net.Conn, error) {
+func defaultDialer(a string, t time.Duration) (net.Conn, error) {
 	return net.DialTimeout("tcp", a, t)
 }
 
 // Uses the provided list and dial functions, can be used to allow flotilla
 // to share a bound port with another binary service.
 func NewMultiStream(
-	list net.Listener,
-	dial func(net.Addr, time.Duration) (net.Conn, error),
+	listen net.Listener,
+	dial func(string, time.Duration) (net.Conn, error),
 	advertise net.Addr,
 	lg *log.Logger,
 	serviceCodes ...byte,
 ) (map[byte]raft.StreamLayer, error) {
 	// sanity checks for listener and advertised address
 	if advertise == nil {
-		advertise = list.Addr()
+		advertise = listen.Addr()
 	}
 	tcpAdvertise, ok := advertise.(*net.TCPAddr)
 	if !ok {
-		log.Printf(logOutput, "NewMultiStream Warning: advertising non TCP address %s", advertise)
+		lg.Printf("NewMultiStream Warning: advertising non TCP address %s", advertise)
 	} else if tcpAdvertise.IP.IsUnspecified() {
-		log.Printf(logOutput, "NewMultiStream Warning: advertising unspecified IP: %s", tcpAdvertise.IP)
+		lg.Printf("NewMultiStream Warning: advertising unspecified IP: %s", tcpAdvertise.IP)
 	}
 	// set up router
 	r := &router{listen, make(chan net.Conn, 16), make(chan closeReq, 16), make(map[byte]*serviceStreams), lg}
 	// set up a channel of conns for each unique serviceCode
-	for _, b := range opCodes {
-		_, exists := services[b]
+	for _, b := range serviceCodes {
+		_, exists := r.chans[b]
 		if exists {
+			lg.Printf("Warning, serviceCode %d was present more than once in NewMultiStream -- allocating a single service")
 			continue
 		}
 		r.chans[b] = &serviceStreams{
@@ -76,8 +76,13 @@ func NewMultiStream(
 			dial:   dial,
 		}
 	}
+	// type hack
+	retMap := make(map[byte]raft.StreamLayer)
+	for k, v := range r.chans {
+		retMap[k] = v
+	}
 	go r.serve()
-	return r.chans, nil
+	return retMap, nil
 }
 
 type router struct {
@@ -130,12 +135,12 @@ type closeReq struct {
 	resp chan bool
 }
 
-func dialWithCode(dialer func(net.Addr, time.Duration) (net.Conn, error), code byte, address net.Addr, timeout net.Timeout) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", address, timeout)
+func dialWithCode(dialer func(string, time.Duration) (net.Conn, error), code byte, address string, timeout time.Duration) (net.Conn, error) {
+	conn, err := dialer(address, timeout)
 	if err != nil {
 		return nil, err
 	}
-	_, err := conn.Write([]byte{code})
+	_, err = conn.Write([]byte{code})
 	if err != nil {
 		conn.Close()
 		return nil, err
@@ -152,16 +157,16 @@ type serviceStreams struct {
 	conns  chan net.Conn
 	closed bool
 	myCode byte
-	dial   func(address net.Addr, timeout time.Duration) (net.Conn, error)
+	dial   func(address string, timeout time.Duration) (net.Conn, error)
 }
 
 // Accept waits for and returns the next connection to the listener.
-func (c *serviceStreams) Accept() (c net.Conn, err error) {
-	c, ok := <-c.conns
+func (c *serviceStreams) Accept() (conn net.Conn, err error) {
+	conn, ok := <-c.conns
 	if !ok {
 		return nil, fmt.Errorf("Tried to accept from closed chan on %s", c.addr)
 	}
-	return c, nil
+	return conn, nil
 }
 
 // Close closes the listener.
@@ -177,12 +182,12 @@ func (c *serviceStreams) Close() error {
 }
 
 // Addr returns the listener's network address.
-func (c *serviceStreams) Addr() Addr {
+func (c *serviceStreams) Addr() net.Addr {
 	return c.addr
 }
 
 // connects to the service listening on
-func (c *serviceStreams) Dial(address net.Addr, timeout time.Duration) (net.Conn, error) {
+func (c *serviceStreams) Dial(address string, timeout time.Duration) (net.Conn, error) {
 	return dialWithCode(c.dial, c.myCode, address, timeout)
 }
 
@@ -201,18 +206,4 @@ func (t *TCPStreamLayer) Dial(address string, timeout time.Duration) (net.Conn, 
 // Accept implements the net.Listener interface.
 func (t *TCPStreamLayer) Accept() (c net.Conn, err error) {
 	return t.listener.Accept()
-}
-
-// Close implements the net.Listener interface.
-func (t *TCPStreamLayer) Close() (err error) {
-	return t.listener.Close()
-}
-
-// Addr implements the net.Listener interface.
-func (t *TCPStreamLayer) Addr() net.Addr {
-	// Use an advertise addr if provided
-	if t.advertise != nil {
-		return t.advertise
-	}
-	return t.listener.Addr()
 }

@@ -1,9 +1,8 @@
-package raftmdb
+package raft
 
 // originally copyright github.com/hashicorp/raft authors
 import (
 	"bytes"
-	"github.com/jbooth/raft"
 	"io/ioutil"
 	"os"
 	"testing"

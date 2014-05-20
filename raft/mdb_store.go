@@ -1,10 +1,9 @@
-package raftmdb
+package raft
 
 // originally copyright github.com/hashicorp/raft authors
 import (
 	"fmt"
-	"github.com/jbooth/flotilla/gomdb"
-	"github.com/jbooth/flotilla/raft"
+	"github.com/jbooth/flotilla/mdb"
 	"os"
 	"path/filepath"
 )
@@ -118,7 +117,7 @@ func (m *MDBStore) startTxn(readonly bool, open ...string) (*mdb.Txn, []mdb.DBI,
 
 	var dbs []mdb.DBI
 	for _, name := range open {
-		dbi, err := tx.DBIOpen(name, dbFlags)
+		dbi, err := tx.DBIOpen(&name, dbFlags)
 		if err != nil {
 			tx.Abort()
 			return nil, nil, err
@@ -178,7 +177,7 @@ func (m *MDBStore) LastIndex() (uint64, error) {
 }
 
 // Gets a log entry at a given index
-func (m *MDBStore) GetLog(index uint64, logOut *raft.Log) error {
+func (m *MDBStore) GetLog(index uint64, logOut *Log) error {
 	key := uint64ToBytes(index)
 
 	tx, dbis, err := m.startTxn(true, dbLogs)
@@ -189,7 +188,7 @@ func (m *MDBStore) GetLog(index uint64, logOut *raft.Log) error {
 
 	val, err := tx.Get(dbis[0], key)
 	if err == mdb.NotFound {
-		return raft.ErrLogNotFound
+		return ErrLogNotFound
 	} else if err != nil {
 		return err
 	}
@@ -199,12 +198,12 @@ func (m *MDBStore) GetLog(index uint64, logOut *raft.Log) error {
 }
 
 // Stores a log entry
-func (m *MDBStore) StoreLog(log *raft.Log) error {
-	return m.StoreLogs([]*raft.Log{log})
+func (m *MDBStore) StoreLog(log *Log) error {
+	return m.StoreLogs([]*Log{log})
 }
 
 // Stores multiple log entries
-func (m *MDBStore) StoreLogs(logs []*raft.Log) error {
+func (m *MDBStore) StoreLogs(logs []*Log) error {
 	// Start write txn
 	tx, dbis, err := m.startTxn(false, dbLogs)
 	if err != nil {

@@ -1,6 +1,7 @@
 package flotilla
 
 import (
+	"fmt"
 	"github.com/jbooth/flotilla/mdb"
 	"sync"
 )
@@ -38,7 +39,7 @@ func (e *env) txn() (Txn, error) {
 		return nil, err
 	}
 	e.numOpen++
-	return &txn{t, e}
+	return &txn{t, e}, nil
 }
 
 // marks this env as pending-closed.  closing the last open transaction will close
@@ -57,18 +58,18 @@ type txn struct {
 	e *env
 }
 
-func (t *txn) DBIOpen(name string, flags uint) (DBI, error) {
-	return t.t.DBIOpen(name, flags)
+func (t *txn) DBIOpen(name string, flags uint) (mdb.DBI, error) {
+	return t.t.DBIOpen(&name, flags)
 }
 
-func (t *txn) Drop(dbi DBI, del int) error {
+func (t *txn) Drop(dbi mdb.DBI, del int) error {
 	return t.t.Drop(dbi, del)
 }
-func (t *txn) Get(dbi DBI, key []byte) ([]byte, error) {
+func (t *txn) Get(dbi mdb.DBI, key []byte) ([]byte, error) {
 	return t.t.Get(dbi, key)
 }
 
-func (t *txn) CursorOpen(dbi DBI) (Cursor, error) {
+func (t *txn) CursorOpen(dbi mdb.DBI) (Cursor, error) {
 	return t.t.CursorOpen(dbi)
 }
 

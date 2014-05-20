@@ -84,9 +84,6 @@ const (
 	MDB_APPENDDUP   = mdb.APPENDDUP
 )
 
-// represents a handle to a named database
-type DBI uint
-
 type Txn interface {
 	//Open a database in the environment.
 	//
@@ -149,7 +146,7 @@ type Txn interface {
 	//and #MDB_CREATE was not specified.
 	//<li>#MDB_DBS_FULL - too many databases have been opened. See #mdb_env_set_maxdbs().
 	//</ul>
-	DBIOpen(name string, flags uint) (DBI, error)
+	DBIOpen(name string, flags uint) (mdb.DBI, error)
 
 	//Empty or delete+close a database.
 	//
@@ -157,7 +154,7 @@ type Txn interface {
 	//@param[in] dbi A database handle returned by #mdb_dbi_open()
 	//@param[in] del 0 to empty the DB, 1 to delete it from the
 	//environment and close the DB handle.
-	Drop(dbi DBI, del int) error
+	Drop(dbi mdb.DBI, del int) error
 
 	//Get items from a database.
 	//
@@ -176,7 +173,7 @@ type Txn interface {
 	//Some possible errors are:
 	//    mdb.NOTFOUND - they key was not in the database
 	//    syscall.EINVAL - an invalid parameter was specified.
-	Get(dbi DBI, key []byte) ([]byte, error)
+	Get(dbi mdb.DBI, key []byte) ([]byte, error)
 
 	//Create a cursor handle for iteration of the database.
 	//
@@ -185,7 +182,7 @@ type Txn interface {
 	//A cursor cannot be used when its database handle is closed.  Nor
 	//when its transaction has ended. It can be discarded with cursor.Close().
 	//A cursor must be closed explicitly, before or after its transaction ends.
-	CursorOpen(dbi DBI) (Cursor, error)
+	CursorOpen(dbi mdb.DBI) (Cursor, error)
 
 	// close this transaction.  if we're a write transaction, this discards pending changes.
 	Abort()
@@ -262,7 +259,7 @@ type WriteTxn interface {
 	//<li>EACCES - an attempt was made to write in a read-only transaction.
 	//<li>EINVAL - an invalid parameter was specified.
 	//</ul>
-	Put(dbi DBI, key []byte, val []byte, flags uint) error
+	Put(dbi mdb.DBI, key []byte, val []byte, flags uint) error
 
 	//Delete items from a database.
 	//
@@ -284,7 +281,7 @@ type WriteTxn interface {
 	//<li>EACCES - an attempt was made to write in a read-only transaction.
 	//<li>EINVAL - an invalid parameter was specified.
 	//</ul>
-	Del(dbi DBI, key, val []byte) error
+	Del(dbi mdb.DBI, key, val []byte) error
 
 	// flush changes to storage and close this transaction
 	Commit() error

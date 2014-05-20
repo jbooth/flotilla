@@ -2,8 +2,9 @@ package flotilla
 
 import (
 	"bytes"
-	"github.com/jbooth/flotilla/raft"
 	"github.com/ugorji/go/codec"
+	"net"
+	"sync"
 )
 
 // flotilla client connection
@@ -16,8 +17,9 @@ type connToLeader struct {
 // joins the raft leader and sets up infrastructure for
 // processing commands
 // can return ErrNotLeader
-func (c *connToLeader) joinLeader(c net.Conn) (*connToLeader, error) {
+func (c *connToLeader) joinLeader(conn net.Conn) (*connToLeader, error) {
 	// send join command
+	return nil, nil
 }
 
 // sends the command for remote execution.
@@ -31,6 +33,7 @@ func (c *connToLeader) forwardCommand(cmd commandReq) (<-chan commandResp, error
 	// send command
 	// register callback
 	// return
+	return nil, nil
 }
 
 type connFromFollower struct {
@@ -40,12 +43,12 @@ type connFromFollower struct {
 
 // reads a command as bytes
 func (c *connFromFollower) readCommand() ([]byte, error) {
-
+	return nil, nil
 }
 
 // invoke this if we're no longer leader
 func (c *connFromFollower) Close() error {
-
+	return c.c.Close()
 }
 
 type joinReq struct {
