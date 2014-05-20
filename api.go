@@ -47,8 +47,9 @@ type DB interface {
 }
 
 // Commands are registered with members of the cluster on startup
-// Keep these consistent across machines!  Use versioning in your command
-// names
+// Do not leak txn handles or cursor handles outside of the execution of a command.
+// Keep these consistent across machines!  Consider using versioning in your
+// command names.
 type Command func(args [][]byte, txn WriteTxn) ([]byte, error)
 
 type Result struct {
@@ -58,13 +59,20 @@ type Result struct {
 
 // DBIOpen Database Flags
 const (
-	MDB_REVERSEKEY = mdb.REVERSEKEY // use reverse string keys
-	MDB_DUPSORT    = mdb.DUPSORT    // use sorted duplicates
-	MDB_INTEGERKEY = mdb.INTEGERKEY // numeric keys in native byte order. The keys must all be of the same size.
-	MDB_DUPFIXED   = mdb.DUPFIXED   // with DUPSORT, sorted dup items have fixed size
-	MDB_INTEGERDUP = mdb.INTEGERDUP // with DUPSORT, dups are numeric in native byte order
-	MDB_REVERSEDUP = mdb.REVERSEDUP // with DUPSORT, use reverse string dups
-	MDB_CREATE     = mdb.CREATE     // create DB if not already existing
+	// use reverse string keys
+	MDB_REVERSEKEY = mdb.REVERSEKEY
+	// use sorted duplicates
+	MDB_DUPSORT = mdb.DUPSORT
+	// numeric keys in native byte order. The keys must all be of the same size.
+	MDB_INTEGERKEY = mdb.INTEGERKEY
+	// with DUPSORT, sorted dup items have fixed size
+	MDB_DUPFIXED = mdb.DUPFIXED
+	// with DUPSORT, dups are numeric in native byte order
+	MDB_INTEGERDUP = mdb.INTEGERDUP
+	// with DUPSORT, use reverse string dups
+	MDB_REVERSEDUP = mdb.REVERSEDUP
+	// create DB if not already existing
+	MDB_CREATE = mdb.CREATE
 )
 
 // put flags
@@ -178,6 +186,9 @@ type Txn interface {
 	//when its transaction has ended. It can be discarded with cursor.Close().
 	//A cursor must be closed explicitly, before or after its transaction ends.
 	CursorOpen(dbi DBI) (Cursor, error)
+
+	// close this transaction.  if we're a write transaction, this discards pending changes.
+	Abort()
 }
 
 type Cursor interface {
@@ -274,4 +285,7 @@ type WriteTxn interface {
 	//<li>EINVAL - an invalid parameter was specified.
 	//</ul>
 	Del(dbi DBI, key, val []byte) error
+
+	// flush changes to storage and close this transaction
+	Commit() error
 }

@@ -53,8 +53,8 @@ func NewDB(
 	//		return nil, err
 	//	}
 	//}
+
 	// start raft server
-	var transporter TransporterPlus
 	s.raftServer, err = raft.NewServer(s.name, s.path, transporter, nil, s.db, "")
 	if err != nil {
 		log.Fatal(err)
