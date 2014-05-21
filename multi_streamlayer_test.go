@@ -3,17 +3,19 @@ package flotilla
 import (
 	"log"
 	"net"
+	"os"
 	"testing"
+	"time"
 )
 
 func TestMultiStream(t *testing.T) {
 
 	testLog := log.New(os.Stderr, "", log.LstdFlags)
-	listen, err := net.ListenTCP("0.0.0.0:1103")
+	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:1103")
 	if err != nil {
 		t.Fatal(err)
 	}
-	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:1103")
+	listen, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,13 +34,13 @@ func TestMultiStream(t *testing.T) {
 	go echoServer(streamLayers[0], 0, testLog)
 	go echoServer(streamLayers[1], 1, testLog)
 	// dial each one
-	connZero, err := streamLayers[0].Dial(addr, time.Second*1)
-	connOne, err := streamLayers[1].Dial(addr, time.Second*1)
+	connZero, err := streamLayers[0].Dial("127.0.0.1:1103", time.Second*1)
+	connOne, err := streamLayers[1].Dial("127.0.0.1:1103", time.Second*1)
 	// confirm each conn goes to the correct server
 	reqBytes := make([]byte, 1)
 	reqBytes[0] = 5
 	connZero.Write(reqBytes)
-	reqBytes[1] = 7
+	reqBytes[0] = 7
 	connOne.Write(reqBytes)
 	respBytes := make([]byte, 2)
 	connZero.Read(respBytes)
@@ -53,7 +55,7 @@ func TestMultiStream(t *testing.T) {
 }
 
 // for every byte sent to us, sends back 2 bytes:  original sent and our code
-func echoServer(l net.Listener, myCode byte, lg log.Logger) {
+func echoServer(l net.Listener, myCode byte, lg *log.Logger) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -69,7 +71,7 @@ func echoServer(l net.Listener, myCode byte, lg log.Logger) {
 				resp := make([]byte, 2)
 				resp[0] = req[0]
 				resp[1] = myCode
-				_, err := conn.Write(resp)
+				_, err = conn.Write(resp)
 				if err != nil {
 					lg.Fatalf("Error reading bytes from conn for code %d : %s", myCode, err)
 				}

@@ -99,7 +99,7 @@ type FlotillaSnapshot struct {
 // starts streaming snapshot into one end of pipe
 func (s *FlotillaSnapshot) pipeCopy() {
 	defer s.pipeW.Close()
-	s.copyErr <- env.CopyFd(s.pipeW.Fd()) // buffered chan here
+	s.copyErr <- s.env.CopyFd(int(s.pipeW.Fd())) // buffered chan here
 }
 
 // pulls
