@@ -185,7 +185,8 @@ func (s *flotillaSnapshot) Release() {
 func (f *flotillaState) Restore(in io.ReadCloser) error {
 	// stream to filePath.tmp
 	tempData := f.tempPath + "/data.mdb"
-	tempFile, err := os.OpenFile(tempData, os.O_WRONLY, 0755)
+	_ = os.Remove(tempData)
+	tempFile, err := os.Create(tempData)
 	if err != nil {
 		return err
 	}
