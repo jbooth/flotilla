@@ -16,38 +16,89 @@ import (
 //   applying commands to local state
 //   snapshotting
 //   waiting until a given logID has been processed locally
-type FlotillaState struct {
+type flotillaState struct {
 	env            *env
 	commands       map[string]Command
 	addr           string // used for uniqueness
 	reqnoCtr       uint64
-	dbPath         string
+	dataPath       string
+	tempPath       string
 	localCallbacks map[uint64]*commandCallback
 	l              *sync.Mutex // guards callbacks and reqnoCtr
 	lg             *log.Logger
 }
 
-func NewFlotillaState(dbPath string, commands map[string]Command) (*FlotillaState, error) {
-	return nil, nil
+func newFlotillaState(dbPath string, commands map[string]Command, addr string, lg *log.Logger) (*flotillaState, error) {
+	// current data stored here
+	dataPath := dbPath + "/data"
+	if err := os.MkdirAll(dataPath, 0755); err != nil {
+		return nil, err
+	}
+	// temp dir for snapshots
+	tempPath := dbPath + "/temp"
+	if err := os.MkdirAll(tempPath, 0755); err != nil {
+		return nil, err
+	}
+	env, err := newenv(dataPath)
+	if err != nil {
+		return nil, err
+	}
+	return &flotillaState{
+		env,
+		commands,
+		addr,
+		0,
+		dataPath,
+		tempPath,
+		make(map[uint64]*commandCallback),
+		new(sync.Mutex),
+		lg,
+	}, nil
 }
 
 // Apply log is invoked once a log entry is commited
-func (f *FlotillaState) Apply(l *raft.Log) interface{} {
+// always returns type Result (no pointer)
+func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	cmd := &commandReq{}
 	err := decodeMsgPack(l.Data, cmd)
 	if err != nil {
-		return Result{[]byte{}, err}
+		return Result{nil, err}
 	}
 	// open write txn
+	txn, err := f.env.writeTxn()
+	if err != nil {
+		return &Result{nil, err}
+	}
 	// execute command, get results
+	cmdExec, ok := f.commands[cmd.Cmd]
+	if !ok {
+		return Result{nil, fmt.Errorf("No command registered with name %s", cmd.Cmd)}
+	}
+	retBytes, retErr := cmdExec(cmd.Args, txn)
+	result := Result{retBytes, retErr}
+	// confirm txn handle closed (our txn wrapper keeps track of state)
+	txn.Abort()
 	// check for callback
-	return nil
+	f.l.Lock()
+	defer f.l.Unlock()
+	cb, ok := f.localCallbacks[cmd.Reqno]
+	if ok {
+		cb.result <- result
+	}
+	return result
+}
+
+func (s *flotillaState) ReadTxn() (Txn, error) {
+	// lock to make sure we don't race with Restore()
+	s.l.Lock()
+	defer s.l.Unlock()
+	return s.env.readTxn()
 }
 
 type commandCallback struct {
 	originAddr string
 	reqNo      uint64
-	f          *FlotillaState
+	f          *flotillaState
 	result     chan Result
 }
 
@@ -55,7 +106,7 @@ func (c *commandCallback) cancel() {
 	//
 }
 
-func (f *FlotillaState) newCommand() *commandCallback {
+func (f *flotillaState) newCommand() *commandCallback {
 	f.l.Lock()
 	defer f.l.Unlock()
 	// bump reqno
@@ -78,18 +129,18 @@ func (f *FlotillaState) newCommand() *commandCallback {
 // threads, but Apply will be called concurrently with Persist. This means
 // the FSM should be implemented in a fashion that allows for concurrent
 // updates while a snapshot is happening.
-func (f *FlotillaState) Snapshot() (raft.FSMSnapshot, error) {
+func (f *flotillaState) Snapshot() (raft.FSMSnapshot, error) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
-	ret := &FlotillaSnapshot{r, w, f.env.e, make(chan error, 1)}
+	ret := &flotillaSnapshot{r, w, f.env.e, make(chan error, 1)}
 	// start snapshot to guarantee it's a snapshot of state as this call is made
 	go ret.pipeCopy()
 	return ret, nil
 }
 
-type FlotillaSnapshot struct {
+type flotillaSnapshot struct {
 	pipeR   *os.File
 	pipeW   *os.File
 	env     *mdb.Env
@@ -97,38 +148,44 @@ type FlotillaSnapshot struct {
 }
 
 // starts streaming snapshot into one end of pipe
-func (s *FlotillaSnapshot) pipeCopy() {
+func (s *flotillaSnapshot) pipeCopy() {
 	defer s.pipeW.Close()
 	s.copyErr <- s.env.CopyFd(int(s.pipeW.Fd())) // buffered chan here
 }
 
-// pulls
 // Persist should dump all necessary state to the WriteCloser,
 // and invoke close when finished or call Cancel on error.
-func (s *FlotillaSnapshot) Persist(sink raft.SnapshotSink) error {
+func (s *flotillaSnapshot) Persist(sink raft.SnapshotSink) error {
 	defer sink.Close()
 	defer s.pipeR.Close()
 	_, e1 := io.Copy(sink, s.pipeR)
 	e2 := <-s.copyErr
+
 	if e2 != nil {
+		sink.Cancel()
 		return fmt.Errorf("Error copying snapshot to pipe: %s", e2)
+	}
+	if e1 != nil {
+		sink.Cancel()
+	} else {
+		sink.Close()
 	}
 	return e1
 }
 
 // Release is invoked when we are finished with the snapshot
-func (s *FlotillaSnapshot) Release() {
-	// no-op, we close all handles in Persist and pipeCopy methods
+func (s *flotillaSnapshot) Release() {
+	// no-op, we close all handles in the Persist and pipeCopy methods
 }
 
 // Restore is used to restore an FSM from a snapshot. It is not called
 // concurrently with any other command. The FSM must discard all previous
 // state.
 // Note, this command is called concurrently with open read txns, so we handle that
-func (f *FlotillaState) Restore(in io.ReadCloser) error {
+func (f *flotillaState) Restore(in io.ReadCloser) error {
 	// stream to filePath.tmp
-	tempPath := f.dbPath + ".tmp"
-	tempFile, err := os.OpenFile(tempPath, os.O_WRONLY, 0755)
+	tempData := f.tempPath + "/data.mdb"
+	tempFile, err := os.OpenFile(tempData, os.O_WRONLY, 0755)
 	if err != nil {
 		return err
 	}
@@ -136,18 +193,23 @@ func (f *FlotillaState) Restore(in io.ReadCloser) error {
 	if _, err = io.Copy(tempFile, in); err != nil {
 		return err
 	}
+	// unlink existing DB and move new one into place
+	// can't atomically rename directories so have to lock for this
 	f.l.Lock()
 	defer f.l.Unlock()
-	// unlink existing DB and move new one into place
-	if err = syscall.Unlink(f.dbPath); err != nil {
+	if err = syscall.Unlink(f.dataPath + "/data.mdb"); err != nil {
 		return err
 	}
-	if err = os.Rename(tempPath, f.dbPath); err != nil {
+	if err = syscall.Unlink(f.dataPath + "/lock.mdb"); err != nil {
+		return err
+	}
+	if err = os.Rename(tempData, f.dataPath+"/data.mdb"); err != nil {
 		return err
 	}
 	// mark existing env as closeable when all outstanding txns finish
+	// posix holds onto our data until we release FD
 	f.env.Close()
 	// re-initialize env
-	f.env, err = newenv(f.dbPath)
+	f.env, err = newenv(f.dataPath)
 	return err
 }

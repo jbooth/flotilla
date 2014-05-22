@@ -10,7 +10,7 @@ import (
 
 func TestMultiStream(t *testing.T) {
 
-	testLog := log.New(os.Stderr, "", log.LstdFlags)
+	testLog := log.New(os.Stderr, "TestMultiStream ", log.LstdFlags)
 	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:1103")
 	if err != nil {
 		t.Fatal(err)
@@ -39,9 +39,15 @@ func TestMultiStream(t *testing.T) {
 	// confirm each conn goes to the correct server
 	reqBytes := make([]byte, 1)
 	reqBytes[0] = 5
-	connZero.Write(reqBytes)
+	_, err = connZero.Write(reqBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	reqBytes[0] = 7
-	connOne.Write(reqBytes)
+	_, err = connOne.Write(reqBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	respBytes := make([]byte, 2)
 	connZero.Read(respBytes)
 	// should be 5,0
@@ -66,14 +72,16 @@ func echoServer(l net.Listener, myCode byte, lg *log.Logger) {
 				req := make([]byte, 1)
 				_, err := conn.Read(req)
 				if err != nil {
-					lg.Fatalf("Error reading bytes from conn for code %d : %s", myCode, err)
+					lg.Printf("Error reading bytes from conn for code %d : %s", myCode, err)
+					return
 				}
 				resp := make([]byte, 2)
 				resp[0] = req[0]
 				resp[1] = myCode
 				_, err = conn.Write(resp)
 				if err != nil {
-					lg.Fatalf("Error reading bytes from conn for code %d : %s", myCode, err)
+					lg.Printf("Error writing bytes to conn for code %d : %s", myCode, err)
+					return
 				}
 			}
 		}()

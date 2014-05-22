@@ -66,17 +66,17 @@ type commandReq struct {
 	Args       [][]byte
 }
 
-func (r *commandReq) MarshalBinary() ([]byte, error) {
-	buf, err := encodeMsgPack(r)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
+//func (r *commandReq) MarshalBinary() ([]byte, error) {
+//	buf, err := encodeMsgPack(r)
+//	if err != nil {
+//		return nil, err
+//	}
+//	return buf.Bytes(), nil
+//}
 
-func (r *commandReq) UnmarshalBinary(data []byte) error {
-	return decodeMsgPack(data, r)
-}
+//func (r *commandReq) UnmarshalBinary(data []byte) error {
+//	return decodeMsgPack(data, r)
+//}
 
 // commandResp has an error if the leader had a non-command-caused error
 // while applying the command.  can be ErrNotLeader.
@@ -85,17 +85,17 @@ type commandResp struct {
 	Err   error
 }
 
-func (r *commandResp) MarshalBinary() ([]byte, error) {
-	buf, err := encodeMsgPack(r)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
+//func (r *commandResp) MarshalBinary() ([]byte, error) {
+//	buf, err := encodeMsgPack(r)
+//	if err != nil {
+//		return nil, err
+//	}
+//	return buf.Bytes(), nil
+//}
 
-func (r *commandResp) UnmarshalBinary(data []byte) error {
-	return decodeMsgPack(data, r)
-}
+//func (r *commandResp) UnmarshalBinary(data []byte) error {
+//	return decodeMsgPack(data, r)
+//}
 
 // Decode reverses the encode operation on a byte slice input
 func decodeMsgPack(buf []byte, out interface{}) error {

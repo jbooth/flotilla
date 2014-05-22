@@ -84,6 +84,9 @@ const (
 	MDB_APPENDDUP   = mdb.APPENDDUP
 )
 
+// A txn represents an atomic snapshot view of the database.
+// A read Txns' view of the data will not be changed by concurrent writes.
+// NOT thread safe, do not share between goroutines.
 type Txn interface {
 	//Open a database in the environment.
 	//
@@ -146,7 +149,7 @@ type Txn interface {
 	//and #MDB_CREATE was not specified.
 	//<li>#MDB_DBS_FULL - too many databases have been opened. See #mdb_env_set_maxdbs().
 	//</ul>
-	DBIOpen(name string, flags uint) (mdb.DBI, error)
+	DBIOpen(name *string, flags uint) (mdb.DBI, error)
 
 	//Empty or delete+close a database.
 	//

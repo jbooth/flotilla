@@ -1,8 +1,20 @@
 package flotilla
 
 import (
+	"fmt"
 	"github.com/jbooth/flotilla/mdb"
 )
+
+func defaultCommands() map[string]Command {
+	return map[string]Command{
+		"Put":              Put,
+		"PutIfAbsent":      PutIfAbsent,
+		"CompareAndSwap":   CompareAndSwap,
+		"CompareAndRemove": CompareAndRemove,
+		"Remove":           Remove,
+	}
+
+}
 
 // some default commands
 
@@ -10,8 +22,13 @@ import (
 // arg0: dbName
 // arg1: key
 // arg2: value
-func PutCmd(args [][]byte, txn WriteTxn) ([]byte, error) {
-	dbi, err := txn.DBIOpen(string(args[0]), MDB_CREATE) // create if not exists
+// returns nil
+func Put(args [][]byte, txn WriteTxn) ([]byte, error) {
+	if len(args) < 3 {
+		return nil, fmt.Errorf("Put needs 3 arguments!  Got %d args", len(args))
+	}
+	dbName := string(args[0])
+	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -31,7 +48,8 @@ func PutCmd(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg2:  value
 // return:  [1] if added, [0] otherwise
 func PutIfAbsent(args [][]byte, txn WriteTxn) ([]byte, error) {
-	dbi, err := txn.DBIOpen(string(args[0]), MDB_CREATE) // create if not exists
+	dbName := string(args[0])
+	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -56,14 +74,15 @@ func PutIfAbsent(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg3: newValue
 // return: new row contents as []byte
 func CompareAndSwap(args [][]byte, txn WriteTxn) ([]byte, error) {
-	dbi, err := txn.DBIOpen(string(args[0]), MDB_CREATE) // create if not exists
+	dbName := string(args[0])
+	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	existingVal, err := txn.Get(dbi, args[1])
 	if err != nil && err != mdb.NotFound {
 		txn.Abort()
 		return nil, err
 	}
 	if err == mdb.NotFound || bytesEqual(args[2], existingVal) {
-		err = txn.Put(dbi, args[1], args[3])
+		err = txn.Put(dbi, args[1], args[3], 0)
 		if err != nil {
 			return nil, err
 		}
@@ -78,8 +97,10 @@ func CompareAndSwap(args [][]byte, txn WriteTxn) ([]byte, error) {
 // remove
 // arg0: dbName
 // arg1: key
+// returns nil
 func Remove(args [][]byte, txn WriteTxn) ([]byte, error) {
-	dbi, err := txn.DBIOpen(string(args[0]), MDB_CREATE) // create if not exists
+	dbName := string(args[0])
+	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -98,14 +119,15 @@ func Remove(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg2: expectedVal
 // ret:  [1] if removed, [0] otherwise
 func CompareAndRemove(args [][]byte, txn WriteTxn) ([]byte, error) {
-	dbi, err := txn.DBIOpen(string(args[0]), MDB_CREATE) // create if not exists
+	dbName := string(args[0])
+	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	existingVal, err := txn.Get(dbi, args[1])
 	if err != nil && err != mdb.NotFound {
 		txn.Abort()
 		return nil, err
 	}
 	if err == mdb.NotFound || bytesEqual(args[2], existingVal) {
-		err = txn.Del(dbi, args[1))
+		err = txn.Del(dbi, args[1], nil)
 		if err != nil {
 			return nil, err
 		}
