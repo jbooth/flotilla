@@ -1,166 +1,153 @@
 package flotilla
 
-//import (
-//	//"gomdb"
-//	"github.com/jbooth/flotilla/raft"
-//	"log"
-//	"net"
-//	"os"
-//	"path/filepath"
-//	"time"
-//)
+import (
+	"github.com/jbooth/flotilla/mdb"
+	"github.com/jbooth/flotilla/raft"
+	"log"
+	"net"
+	"os"
+	"time"
+)
 
-//// Instantiates a new DB serving the ops provided, using the provided dataDir and listener
-//// If Peers is empty, we start as leader.  Otherwise, connect to the existing leader.
-//func NewDB(
-//	peers []string,
-//	dataDir string,
-//	listen net.Listener,
-//	dialer func(net.Addr, time.Duration) (net.Conn, error),
-//	ops map[string]Command) (DB, error) {
+var (
+	dialCodeRaft byte = 0
+	dialCodeFlot byte = 1
+)
 
-//	raftDir := dataDir + "/" + raft
-//	mdbDir := dataDir + "/" + mdb
-//	// make sure dirs exist
-//	if err := path.MkdirAll(raftDir, 0755); err != nil {
-//		return nil, err
-//	}
-//	if err = path.MkdirAll(dataDir, 0755); err != nil {
-//		return nil, err
-//	}
+func NewDB(peers []string, dataDir string, bindAddr string, ops map[string]Command) (DB, error) {
 
-//	s := &server{
-//		name:      nil,
-//		mdbDir:    mdbDir,
-//		raftDir:   raftDir,
-//		peers:     peers,
-//		notLeader: make(chan bool, 1),
-//		listen:    listen,
-//	}
-//	// Read existing name or generate a new one.
-//	// why, again? commented out
+}
 
-//	//if b, err := ioutil.ReadFile(filepath.Join(s.raftDir, "name")); err == nil {
-//	//	s.name = string(b)
-//	//} else {
-//	//	var i uint64
-//	//	log.Printf("Using rand package to generate raft server name")
-//	//	rand.Seed(time.Now().UnixNano())
-//	//	i = uint64(rand.Int())
-//	//	s.name = fmt.Sprintf("%07x", i)[0:7]
-//	//	log.Printf("Setting raft name to %s", s.name)
-//	//	if err = ioutil.WriteFile(filepath.Join(s.raftDir, "name"), []byte(s.name), 0644); err != nil {
-//	//		return nil, err
-//	//	}
-//	//}
+// Instantiates a new DB serving the ops provided, using the provided dataDir and listener
+// If Peers is empty, we start as leader.  Otherwise, connect to the existing leader.
+func NewDBXtra(
+	peers []string,
+	dataDir string,
+	listen net.Listener,
+	dialer func(string, time.Duration) (net.Conn, error),
+	commands map[string]Command,
+	lg *log.Logger) (DB, error) {
 
-//	// start raft server
-//	s.raftServer, err = raft.NewServer(s.name, s.path, transporter, nil, s.db, "")
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//	s.raftServer.Start()
+	raftDir := dataDir + "/" + raft
+	mdbDir := dataDir + "/" + mdb
+	// make sure dirs exist
+	if err := os.MkdirAll(raftDir, 0755); err != nil {
+		return nil, err
+	}
+	if err = os.MkdirAll(dataDir, 0755); err != nil {
+		return nil, err
+	}
+	// user supplied commands are prefixed with "user."
+	commandsForStateMachine := defaultCommands()
+	for cmd, cmdExec := range commands {
+		commandsForStateMachine["user."+cmd] = cmdExec
+	}
+	state, err := newFlotillaState(
+		mdbDir,
+		commandsForStateMachine,
+		listen.Addr().String(),
+		lg,
+	)
+	if err != nil {
+		return nil, err
+	}
 
-//	if leader != "" {
-//		// Join to leader if specified.
+	streamLayers, err := NewMultiStream(listen, dialer, listen.Addr(), lg, dialCodeRaft, dialCodeFlot)
+	if err != nil {
+		return nil, err
+	}
+	// if we're the only peer, bootstrap, otherwise, try to join existing
+	bootstrap := (len(peers) == 0)
+	// start raft server
+	raft, err := newRaft(raftDir, streamLayers[dialCodeRaft], state, bootstrap)
+	if err != nil {
+		return nil, err
+	}
+	s := &server{
+		raft:      raft,
+		state:     state,
+		peers:     peers,
+		notLeader: make(chan bool, 1),
+		rpcLayer:  streamLayers[dialCodeFlot],
+	}
+	return s, nil
+}
 
-//		log.Println("Attempting to join leader:", leader)
+type server struct {
+	raft      raft.Raft
+	state     *flotillaState
+	peers     []string
+	rpcLayer  raft.StreamLayer
+	notLeader chan bool
+}
 
-//		if !s.raftServer.IsLogEmpty() {
-//			log.Fatal("Cannot join with an existing log")
-//		}
-//		if err := s.Join(leader); err != nil {
-//			log.Fatal(err)
-//		}
+func newRaft(path string, streams raft.StreamLayer, state raft.FSM, bootstrap bool) (*raft.Raft, error) {
+	// Create the MDB store for logs and stable storage, retain up to 8gb
+	store, err := raftmdb.NewMDBStoreWithSize(path, 8*1024*1024*1024)
+	if err != nil {
+		return err
+	}
 
-//	} else if s.raftServer.IsLogEmpty() {
-//		// Initialize the server by joining itself.
+	// Create the snapshot store
+	snapshots, err := raft.NewFileSnapshotStore(path, snapshotsRetained, s.config.LogOutput)
+	if err != nil {
+		store.Close()
+		return err
+	}
 
-//		log.Println("Initializing new cluster")
+	// Create a transport layer
+	trans := raft.NewNetworkTransport(streams, 3, 10*time.Second, s.config.LogOutput)
 
-//		_, err := s.raftServer.Do(&raft.DefaultJoinCommand{
-//			Name:             s.raftServer.Name(),
-//			ConnectionString: s.connectionString(),
-//		})
-//		if err != nil {
-//			log.Fatal(err)
-//		}
+	// Setup the peer store
+	raftPeers := raft.NewJSONPeers(path, trans)
 
-//	} else {
-//		log.Println("Recovered from log")
-//	}
-//	return s.httpServer.ListenAndServe()
-//	return s, nil
-//}
+	// Ensure local host is always included if we are in bootstrap mode
+	if bootstrap {
+		peers, err := s.raftPeers.Peers()
+		if err != nil {
+			store.Close()
+			return err
+		}
+		if !raft.PeerContained(peers, trans.LocalAddr()) {
+			s.raftPeers.SetPeers(raft.AddUniquePeer(peers, trans.LocalAddr()))
+		}
+	}
 
-//func newRaft(path string, streams raft.StreamLayer, state raft.FSM, bootstrap bool) (*raft.Raft, error) {
-//	// Create the MDB store for logs and stable storage, retain up to 8gb
-//	store, err := raftmdb.NewMDBStoreWithSize(path, 8*1024*1024*1024)
-//	if err != nil {
-//		return err
-//	}
+	// Setup the Raft store
+	raft, err := raft.NewRaft(raft.DefaultConfig(), state, store, store,
+		snapshots, raftPeers, trans)
+	if err != nil {
+		store.Close()
+		trans.Close()
+		return nil, err
+	}
+	return raft, nil
+}
 
-//	// Create the snapshot store
-//	snapshots, err := raft.NewFileSnapshotStore(path, snapshotsRetained, s.config.LogOutput)
-//	if err != nil {
-//		store.Close()
-//		return err
-//	}
+// public API, executes a command on leader, returns chan which will
+// block until command has been replicated to our local replica
+func (s *server) Command(cmd string, args [][]byte) <-chan Result {
+	if s.raft.State() == raft.Leader {
+		// get clientCallback, future, and wait till executed locally
+		value, err := s.execLocal(command)
+		if err != nil {
+			log.Error("Cannot run command %#v. %s", command, err)
+		}
+		return value, err
+	}
+	// couldn't exec as leader, fallback to forwarding
+	// forward response
+	// add to remoteQueue, goroutine will pull initial server response and then either
+	// wait on local execution or cancel it
+	if leader, ok := s.leaderConnectString(); !ok {
+		return nil, errors.New("Couldn't connect to the cluster leader...")
+	} else {
+		return SendCommandToServer(leader, command)
+	}
 
-//	// Create a transport layer
-//	trans := raft.NewNetworkTransport(streams, 3, 10*time.Second, s.config.LogOutput)
+	return nil, nil
+}
 
-//	// Setup the peer store
-//	raftPeers := raft.NewJSONPeers(path, trans)
+func (s *Server) join(peerAddr string) {
 
-//	// Ensure local host is always included if we are in bootstrap mode
-//	if bootstrap {
-//		peers, err := s.raftPeers.Peers()
-//		if err != nil {
-//			store.Close()
-//			return err
-//		}
-//		if !raft.PeerContained(peers, trans.LocalAddr()) {
-//			s.raftPeers.SetPeers(raft.AddUniquePeer(peers, trans.LocalAddr()))
-//		}
-//	}
-
-//	// Setup the Raft store
-//	raft, err := raft.NewRaft(raft.DefaultConfig(), state, store, store,
-//		snapshots, raftPeers, trans)
-//	if err != nil {
-//		store.Close()
-//		trans.Close()
-//		return nil, err
-//	}
-//	return raft, nil
-//}
-
-//type server struct {
-//	raft      raft.Raft
-//	transport TransporterPlus
-//	name      string
-//	mdbDir    string
-//	raftDir   string
-//	peers     []string
-//	notLeader chan bool
-//	listen    net.Listener
-//}
-
-//// public API
-//func (s *server) Command(cmd string, args [][]byte) <-chan Result {
-//	if s.raft.State() == raft.Leader {
-//		value, err := s.raftServer.Do(command)
-//		if err != nil {
-//			log.Error("Cannot run command %#v. %s", command, err)
-//		}
-//		return value, err
-//	} else {
-//		if leader, ok := s.leaderConnectString(); !ok {
-//			return nil, errors.New("Couldn't connect to the cluster leader...")
-//		} else {
-//			return SendCommandToServer(leader, command)
-//		}
-//	}
-//	return nil, nil
-//}
+}

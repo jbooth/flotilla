@@ -76,7 +76,7 @@ func NewMultiStream(
 			dial:   dial,
 		}
 	}
-	// type hack
+	// type hack, force to map[byte]raft.StreamLayer for return type
 	retMap := make(map[byte]raft.StreamLayer)
 	for k, v := range r.chans {
 		retMap[k] = v
