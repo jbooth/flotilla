@@ -103,7 +103,9 @@ type commandCallback struct {
 }
 
 func (c *commandCallback) cancel() {
-	//
+	c.f.l.Lock()
+	defer c.f.l.Unlock()
+	delete(c.f.localCallbacks, c.reqNo)
 }
 
 func (f *flotillaState) newCommand() *commandCallback {

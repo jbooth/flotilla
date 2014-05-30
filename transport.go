@@ -16,13 +16,13 @@ type connToLeader struct {
 	d       codec.Decoder
 	l       *sync.Mutex
 	lg      *log.Logger
-	pending chan chan error
+	pending chan *commandCallback
 }
 
 // joins the raft leader and sets up infrastructure for
 // processing commands
 // can return ErrNotLeader
-func newConnToLeader(conn net.Conn, advertiseAddr string, lg *log.Logger) (*connToLeader, error) {
+func newConnToLeader(conn net.Conn, lg *log.Logger) (*connToLeader, error) {
 	// send join command
 	h := codec.MsgpackHandle{}
 	ret := &connToLeader{
@@ -31,7 +31,7 @@ func newConnToLeader(conn net.Conn, advertiseAddr string, lg *log.Logger) (*conn
 		d:       codec.NewDecoder(conn, h),
 		l:       new(sync.Mutex),
 		lg:      lg,
-		pending: make(chan chan error, 32),
+		pending: make(chan *commandCallback, 64),
 	}
 	join := &joinReq{
 		peerAddr: advertiseAddr,
@@ -53,54 +53,58 @@ func newConnToLeader(conn net.Conn, advertiseAddr string, lg *log.Logger) (*conn
 }
 
 // sends the command for remote execution.
-// returns nil channel and error if we couldn't communicate with leader or
-// already submitted the provided reqno.
-// commandResp will have non-nil error if we successfully transmitted to leader but
-// the leader had a non-command-returned error such as i/o or ErrNotLeader.
-// Command-returned errors are ignored, we'll get them when command is replicated to local statemachine.
-func (c *connToLeader) forwardCommand(host string, reqno uint64, cmdName string, args [][]byte) (<-chan error, error) {
+// returns error if we couldn't communicate with leader
+func (c *connToLeader) forwardCommand(cb *commandCallback, cmdName string, args [][]byte) error {
 	c.l.Lock()
 	defer c.l.Unlock()
 	// marshal log object
-	lg := logForCommand(host, reqno, cmdName, args)
+	lg := logForCommand(cb.originAddr, cb.reqNo, cmdName, args)
 	resp := make(chan error, 1)
 	// put response chan in pending
 	// send
 	err = c.e.Encode(lg)
 	if err != nil {
-		return nil, err
+		cb.cancel()
+		cb.result <- &Result{nil, err}
+		return err
+	} else {
+		// so our responseReader will forward appropriately
+		c.pending <- cb
 	}
-	r.pending <- resp
-	// return response
-	return resp, nil
+	return nil
+}
+
+func (c *connToLeader) remoteAddr() net.Addr {
+	return c.c.RemoteAddr()
 }
 
 func (c *connToLeader) readResponses() {
 	resp := &commandResp{}
-	for respChan, ok := range c.pending {
+	for cb, ok := range c.pending {
 		if !ok {
 			c.lg.Printf("Closing leaderConn to %s", c.c.RemoteAddr().String())
 			return
 		}
 		err = c.d.Decode(resp)
 		if err != nil {
-			respChan <- err
+			cb.cancel()
+			cb <- Result{nil, err}
 			c.lg.Printf("Error reading response: %s, closing and giving err to all pending requests", err)
 			c.c.Close()
 			for {
 				select {
-				case ch := <-c.pending:
-					ch <- err
+				case cb1 := <-c.pending:
+					cb1.cancel()
+					cb1 <- Result{nil, err}
 				default:
 					return
 				}
 			}
 		}
-		respChan <- resp.Err
 	}
 }
 
-func logForCommand(host string, reqno uint64, cmdName string, args [][]byte) *raft.Log {
+func bytesForCommand(host string, reqno uint64, cmdName string, args [][]byte) []byte {
 	cmd := &commandReq{}
 	cmd.Args = args
 	cmd.Cmd = cmdName
@@ -111,11 +115,15 @@ func logForCommand(host string, reqno uint64, cmdName string, args [][]byte) *ra
 	if err != nil {
 		panic(err)
 	}
+	return b.Bytes()
+}
+
+func logForCommand(host string, reqno uint64, cmdName string, args [][]byte) *raft.Log {
 	return &raft.Log{
 		Index: 0,
 		Term:  0,
 		Type:  raft.LogCommand,
-		Data:  b.Bytes(),
+		Data:  bytesForCommand(host, reqno, cmdName, args),
 	}
 }
 
@@ -186,6 +194,7 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 	}
 }
 
+// runs alongside serveFollower to send actual responses
 func sendResponses(futures chan raft.ApplyFuture, lg *log.Logger, e *codec.Encoder, conn net.Conn) {
 	resp := &cmdResp{}
 	for f := range futures {
@@ -206,6 +215,13 @@ type joinReq struct {
 
 type joinResp struct {
 	leaderHost string // "" is success, "addr:port" of leader if we're not leader
+}
+
+type commandReq struct {
+	Reqno      uint64
+	OriginAddr string
+	Cmd        string
+	Args       [][]byte
 }
 
 // commandResp has an error if the leader had a non-command-caused error

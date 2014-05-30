@@ -37,13 +37,13 @@ type DB interface {
 	Command(cmdName string, args [][]byte) (<-chan Result, error)
 
 	// return true iff we're the leader, otherwise false and the addr of leader
-	CheckLeader() (bool, string)
+	//CheckLeader() (bool, string)
 
 	// Issues a no-op command to the leader and blocks until we've received it.
 	// On success, any previous command cluster-wide which the leader processed
 	// before receiving our Rsync request is guaranteed to be visible
 	// to future Read() Txns.
-	Rsync() error
+	//Rsync() error
 
 	// shuts down this instance
 	Close() error

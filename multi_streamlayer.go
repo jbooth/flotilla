@@ -56,7 +56,7 @@ func NewMultiStream(
 	if !ok {
 		lg.Printf("NewMultiStream Warning: advertising non TCP address %s", advertise)
 	} else if tcpAdvertise.IP.IsUnspecified() {
-		lg.Printf("NewMultiStream Warning: advertising unspecified IP: %s", tcpAdvertise.IP)
+		lg.Printf("NewMultiStream Warning: advertising unspecified IP: %s for address %s", tcpAdvertise.IP, tcpAdvertise.String())
 	}
 	// set up router
 	r := &router{listen, make(chan net.Conn, 16), make(chan closeReq, 16), make(map[byte]*serviceStreams), lg}

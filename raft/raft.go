@@ -88,10 +88,12 @@ type Raft struct {
 
 	// lastContact is the last time we had contact from the
 	// leader node. This can be used to guage staleness.
-	lastContact time.Time
+	lastContact     time.Time
+	lastContactLock sync.RWMutex
 
 	// Leader is the current cluster leader
-	leader net.Addr
+	leader     net.Addr
+	leaderLock sync.RWMutex
 
 	// leaderCh is used to notify of leadership changes
 	leaderCh chan bool
@@ -144,14 +146,14 @@ type Raft struct {
 // Raft node.
 func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps SnapshotStore,
 	peerStore PeerStore, trans Transport) (*Raft, error) {
+	// Validate the configuration
+	if err := ValidateConfig(conf); err != nil {
+		return nil, err
+	}
+
 	// Ensure we have a LogOutput
 	if conf.LogOutput == nil {
 		conf.LogOutput = os.Stderr
-	}
-
-	// Ensure the ElectionTimeout is not less than the HeartbeatTimeout
-	if conf.ElectionTimeout < conf.HeartbeatTimeout {
-		return nil, fmt.Errorf("the ElectionTimeout must be equal or greater than HeartbeatTimeout")
 	}
 
 	// Try to restore the current term
@@ -229,7 +231,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 // it may return nil if there is no current leader or the leader
 // is unknown
 func (r *Raft) Leader() net.Addr {
-	return r.leader
+	r.leaderLock.RLock()
+	leader := r.leader
+	r.leaderLock.RUnlock()
+	return leader
+}
+
+// setLeader is used to modify the current leader of the cluster
+func (r *Raft) setLeader(leader net.Addr) {
+	r.leaderLock.Lock()
+	r.leader = leader
+	r.leaderLock.Unlock()
 }
 
 // Apply is used to apply a command to the FSM in a highly consistent
@@ -395,7 +407,10 @@ func (r *Raft) String() string {
 // LastContact returns the time of last contact by a leader.
 // This only makes sense if we are currently a follower.
 func (r *Raft) LastContact() time.Time {
-	return r.lastContact
+	r.lastContactLock.RLock()
+	last := r.lastContact
+	r.lastContactLock.RUnlock()
+	return last
 }
 
 // Stats is used to return a map of various internal stats. This should only
@@ -416,12 +431,13 @@ func (r *Raft) Stats() map[string]string {
 		"last_snapshot_term":  toString(r.getLastSnapshotTerm()),
 		"num_peers":           toString(uint64(len(r.peers))),
 	}
-	if r.lastContact.IsZero() {
+	last := r.LastContact()
+	if last.IsZero() {
 		s["last_contact"] = "never"
 	} else if r.getState() == Leader {
 		s["last_contact"] = "0"
 	} else {
-		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(r.lastContact))
+		s["last_contact"] = fmt.Sprintf("%v", time.Now().Sub(last))
 	}
 	return s
 }
@@ -506,7 +522,7 @@ func (r *Raft) run() {
 		select {
 		case <-r.shutdownCh:
 			// Clear the leader to prevent forwarding
-			r.leader = nil
+			r.setLeader(nil)
 			return
 		default:
 		}
@@ -544,7 +560,7 @@ func (r *Raft) runFollower() {
 
 		case <-heartbeatTimer:
 			// Heartbeat failed! Transition to the candidate state
-			r.leader = nil
+			r.setLeader(nil)
 			if len(r.peers) == 0 && !r.conf.EnableSingleNode {
 				if !didWarn {
 					r.logger.Printf("[WARN] raft: EnableSingleNode disabled, and no known peers. Aborting election.")
@@ -598,7 +614,7 @@ func (r *Raft) runCandidate() {
 			// Check if we've become the leader
 			if grantedVotes >= votesNeeded {
 				r.logger.Printf("[INFO] raft: Election won. Tally: %d", grantedVotes)
-				r.leader = r.localAddr
+				r.setLeader(r.localAddr)
 				r.setState(Leader)
 				return
 			}
@@ -661,9 +677,11 @@ func (r *Raft) runLeader() {
 		// If we are stepping down for some reason, no known leader.
 		// We may have stepped down due to an RPC call, which would
 		// provide the leader, so we cannot always nil this out.
+		r.leaderLock.Lock()
 		if r.leader == r.localAddr {
 			r.leader = nil
 		}
+		r.leaderLock.Unlock()
 
 		// Notify that we are not the leader
 		asyncNotifyBool(r.leaderCh, false)
@@ -814,7 +832,7 @@ func (r *Raft) checkLeaderLease() time.Duration {
 	var maxDiff time.Duration
 	now := time.Now()
 	for peer, f := range r.leaderState.replState {
-		diff := now.Sub(f.lastContact)
+		diff := now.Sub(f.LastContact())
 		if diff <= r.conf.LeaderLeaseTimeout {
 			contacted++
 			if diff > maxDiff {
@@ -990,7 +1008,7 @@ func (r *Raft) processLog(l *Log, future *logFuture, precommit bool) {
 			r.peerStore.SetPeers([]net.Addr{r.localAddr})
 		} else {
 			r.peers = ExcludePeer(peers, r.localAddr)
-			r.peerStore.SetPeers(peers)
+			r.peerStore.SetPeers(r.peers)
 		}
 
 		// Stop replication for old nodes
@@ -1075,7 +1093,7 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 	}
 
 	// Save the current leader
-	r.leader = r.trans.DecodePeer(a.Leader)
+	r.setLeader(r.trans.DecodePeer(a.Leader))
 
 	// Verify the last log entry
 	if a.PrevLogEntry > 0 {
@@ -1137,7 +1155,9 @@ func (r *Raft) appendEntries(rpc RPC, a *AppendEntriesRequest) {
 
 	// Everything went well, set success
 	resp.Success = true
+	r.lastContactLock.Lock()
 	r.lastContact = time.Now()
+	r.lastContactLock.Unlock()
 	return
 }
 
@@ -1239,7 +1259,7 @@ func (r *Raft) installSnapshot(rpc RPC, req *InstallSnapshotRequest) {
 	}
 
 	// Save the current leader
-	r.leader = r.trans.DecodePeer(req.Leader)
+	r.setLeader(r.trans.DecodePeer(req.Leader))
 
 	// Create a new snapshot
 	sink, err := r.snapshots.Create(req.LastLogIndex, req.LastLogTerm, req.Peers)

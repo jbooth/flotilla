@@ -1,8 +1,8 @@
 package flotilla
 
 import (
-	"github.com/jbooth/flotilla/mdb"
 	"github.com/jbooth/flotilla/raft"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -14,8 +14,9 @@ var (
 	dialCodeFlot byte = 1
 )
 
+// launches a new DB serving out of dataDir
 func NewDB(peers []string, dataDir string, bindAddr string, ops map[string]Command) (DB, error) {
-
+	return nil, nil
 }
 
 // Instantiates a new DB serving the ops provided, using the provided dataDir and listener
@@ -26,15 +27,15 @@ func NewDBXtra(
 	listen net.Listener,
 	dialer func(string, time.Duration) (net.Conn, error),
 	commands map[string]Command,
-	lg *log.Logger) (DB, error) {
-
-	raftDir := dataDir + "/" + raft
-	mdbDir := dataDir + "/" + mdb
+	logOut io.Writer) (DB, error) {
+	lg := log.New(logOut, "flotilla", log.LstdFlags)
+	raftDir := dataDir + "/raft"
+	mdbDir := dataDir + "/mdb"
 	// make sure dirs exist
 	if err := os.MkdirAll(raftDir, 0755); err != nil {
 		return nil, err
 	}
-	if err = os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, err
 	}
 	// user supplied commands are prefixed with "user."
@@ -51,7 +52,6 @@ func NewDBXtra(
 	if err != nil {
 		return nil, err
 	}
-
 	streamLayers, err := NewMultiStream(listen, dialer, listen.Addr(), lg, dialCodeRaft, dialCodeFlot)
 	if err != nil {
 		return nil, err
@@ -59,10 +59,11 @@ func NewDBXtra(
 	// if we're the only peer, bootstrap, otherwise, try to join existing
 	bootstrap := (len(peers) == 0)
 	// start raft server
-	raft, err := newRaft(raftDir, streamLayers[dialCodeRaft], state, bootstrap)
+	raft, err := newRaft(raftDir, streamLayers[dialCodeRaft], state, bootstrap, logOut)
 	if err != nil {
 		return nil, err
 	}
+
 	s := &server{
 		raft:      raft,
 		state:     state,
@@ -74,46 +75,48 @@ func NewDBXtra(
 }
 
 type server struct {
-	raft      raft.Raft
-	state     *flotillaState
-	peers     []string
-	rpcLayer  raft.StreamLayer
-	notLeader chan bool
+	raft       *raft.Raft
+	state      *flotillaState
+	peers      []string
+	rpcLayer   raft.StreamLayer
+	leaderLock *sync.Mutex
+	leaderConn *connToLeader
+	lg         *log.Logger
 }
 
-func newRaft(path string, streams raft.StreamLayer, state raft.FSM, bootstrap bool) (*raft.Raft, error) {
+func newRaft(path string, streams raft.StreamLayer, state raft.FSM, logOut io.Writer) (*raft.Raft, error) {
 	// Create the MDB store for logs and stable storage, retain up to 8gb
-	store, err := raftmdb.NewMDBStoreWithSize(path, 8*1024*1024*1024)
+	store, err := raft.NewMDBStoreWithSize(path, 8*1024*1024*1024)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Create the snapshot store
-	snapshots, err := raft.NewFileSnapshotStore(path, snapshotsRetained, s.config.LogOutput)
+	snapshots, err := raft.NewFileSnapshotStore(path, 1, logOut)
 	if err != nil {
 		store.Close()
-		return err
+		return nil, err
 	}
 
 	// Create a transport layer
-	trans := raft.NewNetworkTransport(streams, 3, 10*time.Second, s.config.LogOutput)
+	trans := raft.NewNetworkTransport(streams, 3, 10*time.Second, logOut)
 
 	// Setup the peer store
 	raftPeers := raft.NewJSONPeers(path, trans)
 
-	// Ensure local host is always included if we are in bootstrap mode
+	// Ensure local host is always included
 	if bootstrap {
-		peers, err := s.raftPeers.Peers()
+		peers, err := raftPeers.Peers()
 		if err != nil {
 			store.Close()
-			return err
+			return nil, err
 		}
 		if !raft.PeerContained(peers, trans.LocalAddr()) {
-			s.raftPeers.SetPeers(raft.AddUniquePeer(peers, trans.LocalAddr()))
+			return nil, fmt.Errorf("Localhost %s not included in peers %+v", trans.LocalAddr().String(), peers)
 		}
 	}
 
-	// Setup the Raft store
+	// Setup the Raft server
 	raft, err := raft.NewRaft(raft.DefaultConfig(), state, store, store,
 		snapshots, raftPeers, trans)
 	if err != nil {
@@ -121,33 +124,79 @@ func newRaft(path string, streams raft.StreamLayer, state raft.FSM, bootstrap bo
 		trans.Close()
 		return nil, err
 	}
+	// wait until we've identified some valid leader
+	timeout := time.Now().Add(1 * time.Minute)
+	for {
+		leader := raft.Leader()
+		if leader != nil {
+			break
+		} else {
+			time.Sleep(1 * time.Second)
+			if time.Now().After(timeout) {
+				return nil, fmt.Errorf("Timed out with no leader elected after 1 minute!")
+			}
+		}
+	}
 	return raft, nil
 }
+
+// returns addr of leader and whether it is us
+func (s *server) Leader() net.Addr {
+	return s.raft.Leader()
+}
+
+// return if we are leader
+func (s *server) IsLeader() bool {
+	return s.raft.State() == raft.Leader
+}
+
+var commandTimeout = 1 * time.Minute
 
 // public API, executes a command on leader, returns chan which will
 // block until command has been replicated to our local replica
 func (s *server) Command(cmd string, args [][]byte) <-chan Result {
-	if s.raft.State() == raft.Leader {
-		// get clientCallback, future, and wait till executed locally
-		value, err := s.execLocal(command)
-		if err != nil {
-			log.Error("Cannot run command %#v. %s", command, err)
-		}
-		return value, err
+
+	if s.IsLeader() {
+		cb := s.state.newCommand()
+		cmdBytes := bytesForCommand(cb.originAddr, cb.reqNo, cmd, args)
+		s.raft.Apply(cmdBytes, commandTimeout)
+		return cb.result
 	}
 	// couldn't exec as leader, fallback to forwarding
 	// forward response
 	// add to remoteQueue, goroutine will pull initial server response and then either
 	// wait on local execution or cancel it
-	if leader, ok := s.leaderConnectString(); !ok {
-		return nil, errors.New("Couldn't connect to the cluster leader...")
-	} else {
-		return SendCommandToServer(leader, command)
+	cb, err := s.dispatchToLeader(cmd, args)
+	if err != nil {
+		ret := make(chan Result, 1)
+		ret <- Result{nil, err}
+		return ret
 	}
-
-	return nil, nil
+	return cb.result, nil
 }
 
-func (s *Server) join(peerAddr string) {
+// checks connection state and dispatches the task to
+// handlePendingRemote pulls responses from leader
+// and then
+func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, error) {
+	s.leaderLock.Lock()
+	defer s.leaderLock.Unlock()
+	var err error
+	for s.Leader() != s.leaderConn.remoteAddr() {
+		// reconnect
+		s.leaderConn.c.Close()
+
+		return nil, fmt.Errorf("Leader addr %s not equal to our current conn!")
+
+	}
+	cb := s.state.newCommand()
+	err := s.leaderConn.forwardCommand(cb, cmd, args)
+	if err != nil {
+		return nil, err
+	}
+	return cb, nil
+}
+
+func (s *server) handlePendingRemote() {
 
 }
