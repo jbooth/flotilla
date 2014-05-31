@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 // MockFSM is an implementation of the FSM interface, and just stores
 // the logs sequentially
 type MockFSM struct {
+	sync.Mutex
 	logs [][]byte
 }
 
@@ -28,15 +30,21 @@ type MockSnapshot struct {
 }
 
 func (m *MockFSM) Apply(log *Log) interface{} {
+	m.Lock()
+	defer m.Unlock()
 	m.logs = append(m.logs, log.Data)
 	return len(m.logs)
 }
 
 func (m *MockFSM) Snapshot() (FSMSnapshot, error) {
+	m.Lock()
+	defer m.Unlock()
 	return &MockSnapshot{m.logs, len(m.logs)}, nil
 }
 
 func (m *MockFSM) Restore(inp io.ReadCloser) error {
+	m.Lock()
+	defer m.Unlock()
 	defer inp.Close()
 	hd := codec.MsgpackHandle{}
 	dec := codec.NewDecoder(inp, &hd)
@@ -64,6 +72,7 @@ func inmemConfig() *Config {
 	conf := DefaultConfig()
 	conf.HeartbeatTimeout = 10 * time.Millisecond
 	conf.ElectionTimeout = 10 * time.Millisecond
+	conf.LeaderLeaseTimeout = 10 * time.Millisecond
 	conf.CommitTimeout = time.Millisecond
 	return conf
 }
@@ -193,12 +202,15 @@ func (c *cluster) EnsureSame(t *testing.T) {
 	first := c.fsms[0]
 
 CHECK:
+	first.Lock()
 	for i, fsm := range c.fsms {
 		if i == 0 {
 			continue
 		}
+		fsm.Lock()
 
 		if len(first.logs) != len(fsm.logs) {
+			fsm.Unlock()
 			if time.Now().After(limit) {
 				t.Fatalf("length mismatch: %d %d",
 					len(first.logs), len(fsm.logs))
@@ -209,6 +221,7 @@ CHECK:
 
 		for idx := 0; idx < len(first.logs); idx++ {
 			if bytes.Compare(first.logs[idx], fsm.logs[idx]) != 0 {
+				fsm.Unlock()
 				if time.Now().After(limit) {
 					t.Fatalf("log mismatch at index %d", idx)
 				} else {
@@ -216,10 +229,14 @@ CHECK:
 				}
 			}
 		}
+		fsm.Unlock()
 	}
+
+	first.Unlock()
 	return
 
 WAIT:
+	first.Unlock()
 	time.Sleep(20 * time.Millisecond)
 	goto CHECK
 }
@@ -227,7 +244,9 @@ WAIT:
 func raftToPeerSet(r *Raft) map[string]struct{} {
 	peers := make(map[string]struct{})
 	peers[r.localAddr.String()] = struct{}{}
-	for _, p := range r.peers {
+
+	raftPeers, _ := r.peerStore.Peers()
+	for _, p := range raftPeers {
 		peers[p.String()] = struct{}{}
 	}
 	return peers
@@ -299,7 +318,7 @@ func MakeCluster(n int, t *testing.T, conf *Config) *cluster {
 		store := c.stores[i]
 		snap := c.snaps[i]
 		trans := c.trans[i]
-		peerStore := &StaticPeers{peers}
+		peerStore := &StaticPeers{StaticPeers: peers}
 
 		raft, err := NewRaft(conf, c.fsms[i], logs, store, snap, peerStore, trans)
 		if err != nil {
@@ -397,7 +416,10 @@ func TestRaft_TripleNode(t *testing.T) {
 
 	// Check that it is applied to the FSM
 	for _, fsm := range c.fsms {
-		if len(fsm.logs) != 1 {
+		fsm.Lock()
+		num := len(fsm.logs)
+		fsm.Unlock()
+		if num != 1 {
 			t.Fatalf("did not apply to FSM!")
 		}
 	}
@@ -424,23 +446,18 @@ func TestRaft_LeaderFail(t *testing.T) {
 	log.Printf("[INFO] Disconnecting %v", leader)
 	c.Disconnect(leader.localAddr)
 
-	// Wait for two leaders
+	// Wait for new leader
 	limit := time.Now().Add(100 * time.Millisecond)
-	var leaders []*Raft
-	for time.Now().Before(limit) && len(leaders) != 2 {
-		time.Sleep(10 * time.Millisecond)
-		leaders = c.GetInState(Leader)
-	}
-	if len(leaders) != 2 {
-		t.Fatalf("expected two leader: %v", leaders)
-	}
-
-	// Get the 'new' leader
 	var newLead *Raft
-	if leaders[0] == leader {
-		newLead = leaders[1]
-	} else {
-		newLead = leaders[0]
+	for time.Now().Before(limit) && newLead == nil {
+		time.Sleep(10 * time.Millisecond)
+		leaders := c.GetInState(Leader)
+		if len(leaders) == 1 && leaders[0] != leader {
+			newLead = leaders[0]
+		}
+	}
+	if newLead == nil {
+		t.Fatalf("expected new leader")
 	}
 
 	// Ensure the term is greater
@@ -464,7 +481,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 	c.FullyConnect()
 
 	// Future1 should fail
-	if err := future1.Error(); err != ErrLeadershipLost {
+	if err := future1.Error(); err != ErrLeadershipLost && err != ErrNotLeader {
 		t.Fatalf("err: %v", err)
 	}
 
@@ -473,6 +490,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 	// Check two entries are applied to the FSM
 	for _, fsm := range c.fsms {
+		fsm.Lock()
 		if len(fsm.logs) != 2 {
 			t.Fatalf("did not apply both to FSM! %v", fsm.logs)
 		}
@@ -482,6 +500,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 		if bytes.Compare(fsm.logs[1], []byte("apply")) != 0 {
 			t.Fatalf("second entry should be 'apply'")
 		}
+		fsm.Unlock()
 	}
 }
 
@@ -610,12 +629,12 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	leader := c.Leader()
 
 	// Enough enqueues should cause at least one timeout...
-	didTimeout := false
+	var didTimeout int32 = 0
 	for i := 0; i < 200; i++ {
 		go func(i int) {
 			future := leader.Apply([]byte(fmt.Sprintf("test%d", i)), time.Microsecond)
 			if future.Error() == ErrEnqueueTimeout {
-				didTimeout = true
+				atomic.StoreInt32(&didTimeout, 1)
 			}
 		}(i)
 	}
@@ -624,7 +643,7 @@ func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Some should have failed
-	if !didTimeout {
+	if atomic.LoadInt32(&didTimeout) == 0 {
 		t.Fatalf("expected a timeout")
 	}
 }
@@ -720,10 +739,10 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if len(leader.peers) != 1 {
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("too many peers")
 	}
-	if len(followers[1].peers) != 1 {
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("too many peers")
 	}
 }
@@ -760,7 +779,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if len(newLeader.peers) != 1 {
+	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("too many peers")
 	}
 
@@ -1004,11 +1023,11 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if len(leader.peers) != 1 {
-		t.Fatalf("too many peers")
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
+		t.Fatalf("too many peers: %v", peers)
 	}
-	if len(followers[1].peers) != 1 {
-		t.Fatalf("too many peers")
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 1 {
+		t.Fatalf("too many peers: %v", peers)
 	}
 
 	// Restart follower now
@@ -1054,7 +1073,6 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	// Make a cluster
 	conf := inmemConfig()
-	conf.LeaderLeaseTimeout = 40 * time.Millisecond
 	c := MakeCluster(2, t, conf)
 	defer c.Close()
 

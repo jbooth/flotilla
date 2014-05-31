@@ -2,8 +2,8 @@ package flotilla
 
 import (
 	"bytes"
+	"github.com/jbooth/flotilla/codec"
 	"github.com/jbooth/flotilla/raft"
-	"github.com/ugorji/go/codec"
 	"log"
 	"net"
 	"sync"

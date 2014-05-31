@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -65,11 +66,14 @@ func NewDBXtra(
 	}
 
 	s := &server{
-		raft:      raft,
-		state:     state,
-		peers:     peers,
-		notLeader: make(chan bool, 1),
-		rpcLayer:  streamLayers[dialCodeFlot],
+		raft:       raft,
+		state:      state,
+		peers:      peers,
+		notLeader:  make(chan bool, 1),
+		rpcLayer:   streamLayers[dialCodeFlot],
+		leaderLock: new(sync.Mutex),
+		leaderConn: nil,
+		lg:         log.New(logOut, "flotilla", log.LstdFlags),
 	}
 	return s, nil
 }
@@ -140,7 +144,7 @@ func newRaft(path string, streams raft.StreamLayer, state raft.FSM, logOut io.Wr
 	return raft, nil
 }
 
-// returns addr of leader and whether it is us
+// returns addr of leader
 func (s *server) Leader() net.Addr {
 	return s.raft.Leader()
 }
@@ -163,11 +167,11 @@ func (s *server) Command(cmd string, args [][]byte) <-chan Result {
 		return cb.result
 	}
 	// couldn't exec as leader, fallback to forwarding
-	// forward response
-	// add to remoteQueue, goroutine will pull initial server response and then either
-	// wait on local execution or cancel it
 	cb, err := s.dispatchToLeader(cmd, args)
 	if err != nil {
+		if cb != nil {
+			cb.cancel()
+		}
 		ret := make(chan Result, 1)
 		ret <- Result{nil, err}
 		return ret
@@ -175,28 +179,31 @@ func (s *server) Command(cmd string, args [][]byte) <-chan Result {
 	return cb.result, nil
 }
 
-// checks connection state and dispatches the task to
-// handlePendingRemote pulls responses from leader
-// and then
+// checks connection state and dispatches the task to leader
+// returns a callback registered with our state machine
 func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, error) {
 	s.leaderLock.Lock()
 	defer s.leaderLock.Unlock()
 	var err error
-	for s.Leader() != s.leaderConn.remoteAddr() {
+	for s.leaderConn == nil || s.Leader() != s.leaderConn.remoteAddr() {
 		// reconnect
-		s.leaderConn.c.Close()
-
-		return nil, fmt.Errorf("Leader addr %s not equal to our current conn!")
-
+		if s.leaderConn != nil {
+			s.leaderConn.c.Close()
+		}
+		newConn, err := s.rpcLayer.Dial(s.Leader().String(), 1*time.Minute)
+		if err != nil {
+			return nil, fmt.Errorf("Couldn't connect to leader at %s", s.Leader().String())
+		}
+		s.leaderConn, err = newConnToLeader(newConn, s.lg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	cb := s.state.newCommand()
 	err := s.leaderConn.forwardCommand(cb, cmd, args)
 	if err != nil {
+		cb.cancel()
 		return nil, err
 	}
 	return cb, nil
-}
-
-func (s *server) handlePendingRemote() {
-
 }

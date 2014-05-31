@@ -5,6 +5,7 @@ import (
 	"github.com/jbooth/flotilla/mdb"
 )
 
+// some default commands
 func defaultCommands() map[string]Command {
 	return map[string]Command{
 		"Put":              Put,
@@ -15,8 +16,6 @@ func defaultCommands() map[string]Command {
 	}
 
 }
-
-// some default commands
 
 // put
 // arg0: dbName

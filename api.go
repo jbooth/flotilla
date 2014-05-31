@@ -3,6 +3,7 @@ package flotilla
 
 import (
 	"github.com/jbooth/flotilla/mdb"
+	"net"
 )
 
 // Represents a DB.
@@ -36,14 +37,17 @@ type DB interface {
 	// this command yet.
 	Command(cmdName string, args [][]byte) (<-chan Result, error)
 
-	// return true iff we're the leader, otherwise false and the addr of leader
-	//CheckLeader() (bool, string)
+	// if we're leader
+	IsLeader() bool
+
+	// leader addr
+	Leader() net.Addr
 
 	// Issues a no-op command to the leader and blocks until we've received it.
 	// On success, any previous command cluster-wide which the leader processed
 	// before receiving our Rsync request is guaranteed to be visible
 	// to future Read() Txns.
-	//Rsync() error
+	Rsync() error
 
 	// shuts down this instance
 	Close() error
@@ -62,24 +66,29 @@ type Result struct {
 
 // DBIOpen Database Flags
 const (
-	// use reverse string keys
+	// when opening a DBI, use reverse string keys
 	MDB_REVERSEKEY = mdb.REVERSEKEY
-	// use sorted duplicates
+	// when opening a DBI, use sorted duplicates
 	MDB_DUPSORT = mdb.DUPSORT
-	// numeric keys in native byte order. The keys must all be of the same size.
+	// when opening a DBI, numeric keys in native byte order. The keys must all be of the same size.
 	MDB_INTEGERKEY = mdb.INTEGERKEY
-	// with DUPSORT, sorted dup items have fixed size
+	// when opening a DBI, with DUPSORT, sorted dup items have fixed size
 	MDB_DUPFIXED = mdb.DUPFIXED
-	// with DUPSORT, dups are numeric in native byte order
+	// when opening a DBI, with DUPSORT, dups are numeric in native byte order
 	MDB_INTEGERDUP = mdb.INTEGERDUP
-	// with DUPSORT, use reverse string dups
+	// when opening a DBI, with DUPSORT, use reverse string dups
 	MDB_REVERSEDUP = mdb.REVERSEDUP
-	// create DB if not already existing
+	// when opening a DBI, create DB if not already existing
 	MDB_CREATE = mdb.CREATE
 )
 
 // put flags
 const (
+	// when putting a new key/data pair, enter pair only if it does not
+	//already appear in the database. This flag may only be specified
+	//if the database was opened with #MDB_DUPSORT. The function will
+	//return #MDB_KEYEXIST if the key/data pair already appears in the
+	//database.
 	MDB_NODUPDATA   = mdb.NODUPDATA
 	MDB_NOOVERWRITE = mdb.NOOVERWRITE
 	MDB_RESERVE     = mdb.RESERVE
@@ -89,76 +98,21 @@ const (
 
 // A txn represents an atomic snapshot view of the database.
 // A read Txns' view of the data will not be changed by concurrent writes.
-// NOT thread safe, do not share between goroutines.
+// Txns are NOT thread safe, do not share between goroutines.  Open a new one if reading,
+// or dispatch another command if writing.
 type Txn interface {
-	//Open a database in the environment.
+	//Open a database in the environment.  Name can be nil.
+	//Possible flags:  MDB_CREATE, MDB_REVERSEKEY, MDB_DUPSORT, MDB_INTEGERKEY, MDB_DUPFIXED, MDB_INTEGERDUP, MDB_REVERSEDUP
 	//
-	//A database handle denotes the name and parameters of a database,
-	//independently of whether such a database exists.
-	//The database handle may be discarded by calling #mdb_dbi_close().
-	//The old database handle is returned if the database was already open.
-	//The handle must only be closed once.
-	//The database handle will be private to the current transaction until
-	//the transaction is successfully committed. If the transaction is
-	//aborted the handle will be closed automatically.
-	//After a successful commit the
-	//handle will reside in the shared environment, and may be used
-	//by other transactions. This function must not be called from
-	//multiple concurrent transactions. A transaction that uses this function
-	//must finish (either commit or abort) before any other transaction may
-	//use this function.
-	//
-	//To use named databases (with name != NULL), #mdb_env_set_maxdbs()
-	//must be called before opening the environment.
-	//@param[in] txn A transaction handle returned by #mdb_txn_begin()
-	//@param[in] name The name of the database to open. If only a single
-	//database is needed in the environment, this value may be NULL.
-	//@param[in] flags Special options for this database. This parameter
-	//must be set to 0 or by bitwise OR'ing together one or more of the
-	//values described here.
-	//<ul>
-	//<li>#MDB_REVERSEKEY
-	//Keys are strings to be compared in reverse order, from the end
-	//of the strings to the beginning. By default, Keys are treated as strings and
-	//compared from beginning to end.
-	//<li>#MDB_DUPSORT
-	//Duplicate keys may be used in the database. (Or, from another perspective,
-	//keys may have multiple data items, stored in sorted order.) By default
-	//keys must be unique and may have only a single data item.
-	//<li>#MDB_INTEGERKEY
-	//Keys are binary integers in native byte order. Setting this option
-	//requires all keys to be the same size, typically sizeof(int)
-	//or sizeof(size_t).
-	//<li>#MDB_DUPFIXED
-	//This flag may only be used in combination with #MDB_DUPSORT. This option
-	//tells the library that the data items for this database are all the same
-	//size, which allows further optimizations in storage and retrieval. When
-	//all data items are the same size, the #MDB_GET_MULTIPLE and #MDB_NEXT_MULTIPLE
-	//cursor operations may be used to retrieve multiple items at once.
-	//<li>#MDB_INTEGERDUP
-	//This option specifies that duplicate data items are also integers, and
-	//should be sorted as such.
-	//<li>#MDB_REVERSEDUP
-	//This option specifies that duplicate data items should be compared as
-	//strings in reverse order.
-	//<li>#MDB_CREATE
-	//Create the named database if it doesn't exist. This option is not
-	//allowed in a read-only transaction or a read-only environment.
-	//</ul>
-	//@param[out] dbi Address where the new #MDB_dbi handle will be stored
+	//Returns type mdb.DBI, an opaque uint representing this open DB
 	//Some possible errors are:
-	//<ul>
-	//<li>#MDB_NOTFOUND - the specified database doesn't exist in the environment
-	//and #MDB_CREATE was not specified.
-	//<li>#MDB_DBS_FULL - too many databases have been opened. See #mdb_env_set_maxdbs().
-	//</ul>
+	//
+	//MDB_NOTFOUND - the specified database doesn't exist in the environment and #MDB_CREATE was not specified.
+	//MDB_DBS_FULL - too many databases have been opened. See #mdb_env_set_maxdbs().
 	DBIOpen(name *string, flags uint) (mdb.DBI, error)
 
 	//Empty or delete+close a database.
-	//
-	//@param[in] txn A transaction handle returned by #mdb_txn_begin()
-	//@param[in] dbi A database handle returned by #mdb_dbi_open()
-	//@param[in] del 0 to empty the DB, 1 to delete it from the
+	//Values for del: 0 to empty the DB, 1 to delete it from the
 	//environment and close the DB handle.
 	Drop(dbi mdb.DBI, del int) error
 
@@ -204,15 +158,9 @@ type Cursor interface {
 	//
 	//This call is only valid on databases that support sorted duplicate
 	//data items #MDB_DUPSORT.
-	//@param[in] cursor A cursor handle returned by #mdb_cursor_open()
-	//@param[out] countp Address where the count will be stored
-	//@return A non-zero error value on failure and 0 on success. Some possible
-	//errors are:
-	//<ul>
-	//<li>EINVAL - cursor is not initialized, or an invalid parameter was specified.
-	//</ul>
 	Count() (uint64, error)
 
+	// close this cursor
 	Close() error
 }
 
