@@ -35,7 +35,7 @@ type DB interface {
 	// all commands in the same order, guaranteeing consistency with concurrent
 	// commands across the cluster, but are not guaranteed to have received
 	// this command yet.
-	Command(cmdName string, args [][]byte) (<-chan Result, error)
+	Command(cmdName string, args [][]byte) <-chan Result
 
 	// if we're leader
 	IsLeader() bool

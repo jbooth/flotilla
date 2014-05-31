@@ -13,6 +13,7 @@ func defaultCommands() map[string]Command {
 		"CompareAndSwap":   CompareAndSwap,
 		"CompareAndRemove": CompareAndRemove,
 		"Remove":           Remove,
+		"Noop":             Noop,
 	}
 
 }
@@ -136,6 +137,10 @@ func CompareAndRemove(args [][]byte, txn WriteTxn) ([]byte, error) {
 		txn.Abort()
 		return existingVal, nil
 	}
+}
+
+func Noop(args [][]byte, txn WriteTxn) ([]byte, error) {
+	return nil, nil
 }
 
 func bytesEqual(a []byte, b []byte) bool {

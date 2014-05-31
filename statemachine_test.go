@@ -2,7 +2,6 @@ package flotilla
 
 import (
 	"fmt"
-	"github.com/jbooth/flotilla/raft"
 	"log"
 	"os"
 	"testing"
@@ -150,24 +149,24 @@ func TestStateMachine(t *testing.T) {
 	}
 }
 
-func logForCommand(host string, reqno uint64, cmdName string, args [][]byte) *raft.Log {
-	cmd := &commandReq{}
-	cmd.Args = args
-	cmd.Cmd = cmdName
-	// no callback
-	cmd.OriginAddr = host
-	cmd.Reqno = reqno
-	b, err := encodeMsgPack(cmd)
-	if err != nil {
-		panic(err)
-	}
-	return &raft.Log{
-		Index: 0,
-		Term:  0,
-		Type:  raft.LogCommand,
-		Data:  b.Bytes(),
-	}
-}
+//func logForCommand(host string, reqno uint64, cmdName string, args [][]byte) *raft.Log {
+//	cmd := &commandReq{}
+//	cmd.Args = args
+//	cmd.Cmd = cmdName
+//	// no callback
+//	cmd.OriginAddr = host
+//	cmd.Reqno = reqno
+//	b, err := encodeMsgPack(cmd)
+//	if err != nil {
+//		panic(err)
+//	}
+//	return &raft.Log{
+//		Index: 0,
+//		Term:  0,
+//		Type:  raft.LogCommand,
+//		Data:  b.Bytes(),
+//	}
+//}
 
 type fileSnapshotSink struct {
 	*os.File

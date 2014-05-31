@@ -1,6 +1,7 @@
 package flotilla
 
 import (
+	"fmt"
 	"github.com/jbooth/flotilla/raft"
 	"io"
 	"log"
@@ -57,10 +58,8 @@ func NewDBXtra(
 	if err != nil {
 		return nil, err
 	}
-	// if we're the only peer, bootstrap, otherwise, try to join existing
-	bootstrap := (len(peers) == 0)
 	// start raft server
-	raft, err := newRaft(raftDir, streamLayers[dialCodeRaft], state, bootstrap, logOut)
+	raft, err := newRaft(raftDir, streamLayers[dialCodeRaft], state, logOut)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +68,6 @@ func NewDBXtra(
 		raft:       raft,
 		state:      state,
 		peers:      peers,
-		notLeader:  make(chan bool, 1),
 		rpcLayer:   streamLayers[dialCodeFlot],
 		leaderLock: new(sync.Mutex),
 		leaderConn: nil,
@@ -109,15 +107,13 @@ func newRaft(path string, streams raft.StreamLayer, state raft.FSM, logOut io.Wr
 	raftPeers := raft.NewJSONPeers(path, trans)
 
 	// Ensure local host is always included
-	if bootstrap {
-		peers, err := raftPeers.Peers()
-		if err != nil {
-			store.Close()
-			return nil, err
-		}
-		if !raft.PeerContained(peers, trans.LocalAddr()) {
-			return nil, fmt.Errorf("Localhost %s not included in peers %+v", trans.LocalAddr().String(), peers)
-		}
+	peers, err := raftPeers.Peers()
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	if !raft.PeerContained(peers, trans.LocalAddr()) {
+		return nil, fmt.Errorf("Localhost %s not included in peers %+v", trans.LocalAddr().String(), peers)
 	}
 
 	// Setup the Raft server
@@ -176,7 +172,7 @@ func (s *server) Command(cmd string, args [][]byte) <-chan Result {
 		ret <- Result{nil, err}
 		return ret
 	}
-	return cb.result, nil
+	return cb.result
 }
 
 // checks connection state and dispatches the task to leader
@@ -194,16 +190,30 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 		if err != nil {
 			return nil, fmt.Errorf("Couldn't connect to leader at %s", s.Leader().String())
 		}
-		s.leaderConn, err = newConnToLeader(newConn, s.lg)
+		s.leaderConn, err = newConnToLeader(newConn, s.rpcLayer.Addr().String(), s.lg)
 		if err != nil {
 			return nil, err
 		}
 	}
 	cb := s.state.newCommand()
-	err := s.leaderConn.forwardCommand(cb, cmd, args)
+	err = s.leaderConn.forwardCommand(cb, cmd, args)
 	if err != nil {
 		cb.cancel()
 		return nil, err
 	}
 	return cb, nil
+}
+
+func (s *server) Read() (Txn, error) {
+	return s.state.ReadTxn()
+}
+
+func (s *server) Rsync() error {
+	resultCh := s.Command("Noop", [][]byte{})
+	result := <-resultCh
+	return result.Err
+}
+func (s *server) Close() error {
+	f := s.raft.Shutdown()
+	return f.Error()
 }

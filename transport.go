@@ -7,13 +7,14 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 // flotilla client connection
 type connToLeader struct {
 	c       net.Conn
-	e       codec.Encoder
-	d       codec.Decoder
+	e       *codec.Encoder
+	d       *codec.Decoder
 	l       *sync.Mutex
 	lg      *log.Logger
 	pending chan *commandCallback
@@ -22,9 +23,9 @@ type connToLeader struct {
 // joins the raft leader and sets up infrastructure for
 // processing commands
 // can return ErrNotLeader
-func newConnToLeader(conn net.Conn, lg *log.Logger) (*connToLeader, error) {
+func newConnToLeader(conn net.Conn, advertiseAddr string, lg *log.Logger) (*connToLeader, error) {
 	// send join command
-	h := codec.MsgpackHandle{}
+	h := &codec.MsgpackHandle{}
 	ret := &connToLeader{
 		c:       conn,
 		e:       codec.NewEncoder(conn, h),
@@ -59,13 +60,12 @@ func (c *connToLeader) forwardCommand(cb *commandCallback, cmdName string, args 
 	defer c.l.Unlock()
 	// marshal log object
 	lg := logForCommand(cb.originAddr, cb.reqNo, cmdName, args)
-	resp := make(chan error, 1)
 	// put response chan in pending
 	// send
-	err = c.e.Encode(lg)
+	err := c.e.Encode(lg)
 	if err != nil {
 		cb.cancel()
-		cb.result <- &Result{nil, err}
+		cb.result <- Result{nil, err}
 		return err
 	} else {
 		// so our responseReader will forward appropriately
@@ -80,28 +80,27 @@ func (c *connToLeader) remoteAddr() net.Addr {
 
 func (c *connToLeader) readResponses() {
 	resp := &commandResp{}
-	for cb, ok := range c.pending {
-		if !ok {
-			c.lg.Printf("Closing leaderConn to %s", c.c.RemoteAddr().String())
-			return
-		}
-		err = c.d.Decode(resp)
+	for cb := range c.pending {
+		err := c.d.Decode(resp)
 		if err != nil {
 			cb.cancel()
-			cb <- Result{nil, err}
+			cb.result <- Result{nil, err}
 			c.lg.Printf("Error reading response: %s, closing and giving err to all pending requests", err)
 			c.c.Close()
 			for {
 				select {
 				case cb1 := <-c.pending:
 					cb1.cancel()
-					cb1 <- Result{nil, err}
+					cb1.result <- Result{nil, err}
 				default:
 					return
 				}
 			}
 		}
 	}
+	c.lg.Printf("Closing leaderConn to %s", c.c.RemoteAddr().String())
+	c.c.Close()
+	return
 }
 
 func bytesForCommand(host string, reqno uint64, cmdName string, args [][]byte) []byte {
@@ -130,7 +129,7 @@ func logForCommand(host string, reqno uint64, cmdName string, args [][]byte) *ra
 // serves a follower from a leader server
 // we tell all servers to go elsewhere if we are not leader
 func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
-	ch := codec.MsgpackHandle{}
+	ch := &codec.MsgpackHandle{}
 	decode := codec.NewDecoder(follower, ch)
 	encode := codec.NewEncoder(follower, ch)
 	// read join command
@@ -141,28 +140,28 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 		return
 	}
 	// register with leader
-	leader := true
-	if leader.IsLeader {
+	isLeader := true
+	if leader.IsLeader() {
 		lf := leader.raft.VerifyLeader()
 		err := lf.Error()
 		if err != nil {
 			lg.Printf("Error while verifying leader on host %s : %s", leader.rpcLayer.Addr().String(), err)
-			leader = false
+			isLeader = false
 		}
-		peerAddr, err := net.ResolveTCPAddr(jReq.peerAddr)
+		peerAddr, err := net.ResolveTCPAddr("tcp", jReq.peerAddr)
 		if err != nil {
 			lg.Printf("Couldn't resolve pathname %s processing join from %s", jReq.peerAddr, follower.RemoteAddr().String())
 			follower.Close()
 			return
 		}
-		leader.raft.AddPeer(jReq.peerAddr)
+		leader.raft.AddPeer(peerAddr)
 	} else {
-		leader = false
+		isLeader = false
 	}
-	if !leader {
+	if !isLeader {
 		// send response indicating leader is someone else, then return
 		lg.Printf("Node %s not leader, refusing connection to peer %s", leader.rpcLayer.Addr().String(), jReq.peerAddr)
-		leaderAddr := leader.raft.LeaderAddr()
+		leaderAddr := leader.raft.Leader()
 		jResp := &joinResp{""}
 		if leaderAddr != nil {
 			jResp.leaderHost = leaderAddr.String()
@@ -173,7 +172,6 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 	}
 	// read commands
 	cmdReq := &raft.Log{}
-	cmdResp := &commandResp{}
 	err = nil
 	futures := make(chan raft.ApplyFuture, 16)
 	defer func() {
@@ -189,14 +187,14 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 			return
 		}
 		// exec with leader
-		future := leader.raft.Apply(cmdReq.Data, nil)
+		future := leader.raft.Apply(cmdReq.Data, 1*time.Minute)
 		futures <- future
 	}
 }
 
 // runs alongside serveFollower to send actual responses
 func sendResponses(futures chan raft.ApplyFuture, lg *log.Logger, e *codec.Encoder, conn net.Conn) {
-	resp := &cmdResp{}
+	resp := &commandResp{}
 	for f := range futures {
 		err := f.Error()
 		resp.Err = err
