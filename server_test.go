@@ -10,27 +10,42 @@ func TestServer(t *testing.T) {
 
 	// set up cluster of 3
 	servers := make([]DB, 3)
-	addrs := []string{"127.0.0.1:1103", "127.0.0.1:1104", "127.0.0.1:1105"}
+	addrs := []string{"127.0.0.1:1203", "127.0.0.1:1204", "127.0.0.1:1205"}
 	dataDirs := make([]string, 3)
+	waitingUp := make([]chan error, 3)
 	var err error
+
 	for i := 0; i < 3; i++ {
 		dataDirs[i] = os.TempDir() + fmt.Sprintf("/flot_test_%d", i)
 		chkPanic(os.RemoveAll(dataDirs[i]))
 		chkPanic(os.MkdirAll(dataDirs[i], 0777))
-		servers[i], err = NewDB(
-			addrs,
-			dataDirs[i],
-			addrs[i],
-			defaultCommands(),
-		)
+		// start first server with cluster of 1 so it elects self
+		waitingUp[i] = make(chan error)
+		go func(j int) {
+			fmt.Printf("Initializing server %d\n", j)
+			servers[j], err = NewDB(
+				addrs,
+				dataDirs[j],
+				addrs[j],
+				defaultCommands(),
+			)
+			waitingUp[j] <- err
+		}(i)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	// figure out which is leader
+	for _, waiter := range waitingUp {
+		err = <-waiter
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	fmt.Printf("All servers up\n")
+	// figure out which is leader
 	leaderIdx := 0
 	for i := 0; i < 3; i++ {
+		fmt.Printf("Checking if server %d is leader \n", i)
 		if servers[i].IsLeader() {
 			leaderIdx = i
 			fmt.Printf("Leader is server %d\n", leaderIdx)

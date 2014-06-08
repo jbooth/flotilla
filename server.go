@@ -18,7 +18,30 @@ var (
 
 // launches a new DB serving out of dataDir
 func NewDB(peers []string, dataDir string, bindAddr string, ops map[string]Command) (DB, error) {
-	return nil, nil
+	//_, bindPort, err := net.SplitHostPort(bindAddr)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//bindAddr = fmt.Sprintf("0.0.0.0:%s", bindPort)
+	//fmt.Printf("Resolving for bind: %s\n", bindAddr)
+	laddr, err := net.ResolveTCPAddr("tcp", bindAddr)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("Starting listener on %s\n", bindAddr)
+	listen, err := net.ListenTCP("tcp", laddr)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("Calling newdbxtra with peers %+v\n", peers)
+	return NewDBXtra(
+		peers,
+		dataDir,
+		listen,
+		defaultDialer,
+		defaultCommands(),
+		os.Stderr,
+	)
 }
 
 // Instantiates a new DB serving the ops provided, using the provided dataDir and listener
@@ -30,6 +53,7 @@ func NewDBXtra(
 	dialer func(string, time.Duration) (net.Conn, error),
 	commands map[string]Command,
 	logOut io.Writer) (DB, error) {
+	fmt.Printf("Starting server with peers %+v\n", peers)
 	lg := log.New(logOut, "flotilla", log.LstdFlags)
 	raftDir := dataDir + "/raft"
 	mdbDir := dataDir + "/mdb"
@@ -59,7 +83,7 @@ func NewDBXtra(
 		return nil, err
 	}
 	// start raft server
-	raft, err := newRaft(raftDir, streamLayers[dialCodeRaft], state, logOut)
+	raft, err := newRaft(peers, raftDir, streamLayers[dialCodeRaft], state, logOut)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +110,7 @@ type server struct {
 	lg         *log.Logger
 }
 
-func newRaft(path string, streams raft.StreamLayer, state raft.FSM, logOut io.Writer) (*raft.Raft, error) {
+func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.FSM, logOut io.Writer) (*raft.Raft, error) {
 	// Create the MDB store for logs and stable storage, retain up to 8gb
 	store, err := raft.NewMDBStoreWithSize(path, 8*1024*1024*1024)
 	if err != nil {
@@ -104,20 +128,35 @@ func newRaft(path string, streams raft.StreamLayer, state raft.FSM, logOut io.Wr
 	trans := raft.NewNetworkTransport(streams, 3, 10*time.Second, logOut)
 
 	// Setup the peer store
+	fmt.Printf("Resolving peers %+v\n", peers)
+	peerAddrs := make([]net.Addr, len(peers), len(peers))
+	for idx, p := range peers {
+		peerAddrs[idx], err = net.ResolveTCPAddr("tcp", p)
+		if err != nil {
+			return nil, err
+		}
+	}
+	fmt.Printf("Setting peer addrs %+v\n", peerAddrs)
 	raftPeers := raft.NewJSONPeers(path, trans)
-
+	if err = raftPeers.SetPeers(peerAddrs); err != nil {
+		return nil, err
+	}
 	// Ensure local host is always included
-	peers, err := raftPeers.Peers()
+	peerAddrs, err = raftPeers.Peers()
 	if err != nil {
 		store.Close()
 		return nil, err
 	}
-	if !raft.PeerContained(peers, trans.LocalAddr()) {
+	if !raft.PeerContained(peerAddrs, trans.LocalAddr()) {
 		return nil, fmt.Errorf("Localhost %s not included in peers %+v", trans.LocalAddr().String(), peers)
 	}
 
 	// Setup the Raft server
-	raft, err := raft.NewRaft(raft.DefaultConfig(), state, store, store,
+	raftCfg := raft.DefaultConfig()
+	if len(peers) == 1 {
+		raftCfg.EnableSingleNode = true
+	}
+	raft, err := raft.NewRaft(raftCfg, state, store, store,
 		snapshots, raftPeers, trans)
 	if err != nil {
 		store.Close()
@@ -128,6 +167,7 @@ func newRaft(path string, streams raft.StreamLayer, state raft.FSM, logOut io.Wr
 	timeout := time.Now().Add(1 * time.Minute)
 	for {
 		leader := raft.Leader()
+		fmt.Printf("Identified leader %s from host %s\n", leader, trans.LocalAddr().String())
 		if leader != nil {
 			break
 		} else {
