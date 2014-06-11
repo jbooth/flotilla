@@ -70,9 +70,9 @@ func (m *MockSnapshot) Release() {
 // Return configurations optimized for in-memory
 func inmemConfig() *Config {
 	conf := DefaultConfig()
-	conf.HeartbeatTimeout = 10 * time.Millisecond
-	conf.ElectionTimeout = 10 * time.Millisecond
-	conf.LeaderLeaseTimeout = 10 * time.Millisecond
+	conf.HeartbeatTimeout = 50 * time.Millisecond
+	conf.ElectionTimeout = 50 * time.Millisecond
+	conf.LeaderLeaseTimeout = 50 * time.Millisecond
 	conf.CommitTimeout = time.Millisecond
 	return conf
 }
@@ -129,7 +129,7 @@ func (c *cluster) GetInState(s RaftState) []*Raft {
 }
 
 func (c *cluster) Leader() *Raft {
-	timeout := time.AfterFunc(250*time.Millisecond, func() {
+	timeout := time.AfterFunc(400*time.Millisecond, func() {
 		panic("timeout waiting for leader")
 	})
 	defer timeout.Stop()
@@ -168,7 +168,7 @@ func (c *cluster) Disconnect(a net.Addr) {
 }
 
 func (c *cluster) EnsureLeader(t *testing.T, expect net.Addr) {
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(400 * time.Millisecond)
 CHECK:
 	for _, r := range c.rafts {
 		leader := r.Leader()
@@ -198,7 +198,7 @@ WAIT:
 }
 
 func (c *cluster) EnsureSame(t *testing.T) {
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(400 * time.Millisecond)
 	first := c.fsms[0]
 
 CHECK:
@@ -253,7 +253,7 @@ func raftToPeerSet(r *Raft) map[string]struct{} {
 }
 
 func (c *cluster) EnsureSamePeers(t *testing.T) {
-	limit := time.Now().Add(200 * time.Millisecond)
+	limit := time.Now().Add(400 * time.Millisecond)
 	peerSet := raftToPeerSet(c.rafts[0])
 
 CHECK:
@@ -412,7 +412,7 @@ func TestRaft_TripleNode(t *testing.T) {
 	}
 
 	// Wait for replication
-	time.Sleep(3 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
 
 	// Check that it is applied to the FSM
 	for _, fsm := range c.fsms {
@@ -440,14 +440,14 @@ func TestRaft_LeaderFail(t *testing.T) {
 	}
 
 	// Wait for replication
-	time.Sleep(3 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
 
 	// Disconnect the leader now
 	log.Printf("[INFO] Disconnecting %v", leader)
 	c.Disconnect(leader.localAddr)
 
 	// Wait for new leader
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var newLead *Raft
 	for time.Now().Before(limit) && newLead == nil {
 		time.Sleep(10 * time.Millisecond)
@@ -462,7 +462,7 @@ func TestRaft_LeaderFail(t *testing.T) {
 
 	// Ensure the term is greater
 	if newLead.getCurrentTerm() <= leader.getCurrentTerm() {
-		t.Fatalf("expected newer term!")
+		t.Fatalf("expected newer term! %d %d", newLead.getCurrentTerm(), leader.getCurrentTerm())
 	}
 
 	// Apply should work not work on old leader
@@ -576,8 +576,8 @@ func TestRaft_ApplyNonLeader(t *testing.T) {
 func TestRaft_ApplyConcurrent(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig()
-	conf.HeartbeatTimeout = 100 * time.Millisecond
-	conf.ElectionTimeout = 100 * time.Millisecond
+	conf.HeartbeatTimeout = 80 * time.Millisecond
+	conf.ElectionTimeout = 80 * time.Millisecond
 	c := MakeCluster(3, t, conf)
 	defer c.Close()
 
@@ -620,8 +620,8 @@ func TestRaft_ApplyConcurrent(t *testing.T) {
 func TestRaft_ApplyConcurrent_Timeout(t *testing.T) {
 	// Make the cluster
 	conf := inmemConfig()
-	conf.HeartbeatTimeout = 100 * time.Millisecond
-	conf.ElectionTimeout = 100 * time.Millisecond
+	conf.HeartbeatTimeout = 80 * time.Millisecond
+	conf.ElectionTimeout = 80 * time.Millisecond
 	c := MakeCluster(1, t, conf)
 	defer c.Close()
 
@@ -671,7 +671,7 @@ func TestRaft_JoinNode(t *testing.T) {
 	c.FullyConnect()
 
 	// Wait until we have 2 leaders
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var leaders []*Raft
 	for time.Now().Before(limit) && len(leaders) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -688,7 +688,7 @@ func TestRaft_JoinNode(t *testing.T) {
 	}
 
 	// Wait until we have 2 followers
-	limit = time.Now().Add(100 * time.Millisecond)
+	limit = time.Now().Add(200 * time.Millisecond)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -718,7 +718,7 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -739,10 +739,10 @@ func TestRaft_RemoveFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers")
 	}
-	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers")
 	}
 }
@@ -756,7 +756,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -779,7 +779,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := newLeader.peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers")
 	}
 
@@ -789,7 +789,7 @@ func TestRaft_RemoveLeader(t *testing.T) {
 	}
 
 	// Old leader should have no peers
-	if len(leader.peers) != 0 {
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
 		t.Fatalf("leader should have no peers")
 	}
 }
@@ -811,7 +811,7 @@ func TestRaft_RemoveLeader_SplitCluster(t *testing.T) {
 	leader.RemovePeer(leader.localAddr)
 
 	// Wait until we have 2 leaders
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var leaders []*Raft
 	for time.Now().Before(limit) && len(leaders) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -1002,7 +1002,7 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	leader := c.Leader()
 
 	// Wait until we have 2 followers
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
@@ -1023,50 +1023,39 @@ func TestRaft_ReJoinFollower(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if peers, _ := leader.peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers: %v", peers)
 	}
-	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 1 {
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 2 {
 		t.Fatalf("too many peers: %v", peers)
 	}
-
-	// Restart follower now
-	raft, err := NewRaft(follower.conf,
-		follower.fsm,
-		follower.logs,
-		follower.stable,
-		follower.snapshots,
-		follower.peerStore,
-		follower.trans)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	defer raft.Shutdown()
 
 	// Get the leader
 	time.Sleep(20 * time.Millisecond)
 	leader = c.Leader()
 
-	// Rejoin
-	future = leader.AddPeer(raft.localAddr)
-	if err := future.Error(); err != nil {
+	// Rejoin. The follower will have a higher term than the leader,
+	// this will cause the leader to step down, and a new round of elections
+	// to take place. We should eventually re-stabilize.
+	future = leader.AddPeer(follower.localAddr)
+	if err := future.Error(); err != nil && err != ErrLeadershipLost {
 		t.Fatalf("err: %v", err)
 	}
 
 	// Wait a while
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond)
 
 	// Other nodes should have fewer peers
-	if len(leader.peers) != 2 {
-		t.Fatalf("missing peer")
+	if peers, _ := leader.peerStore.Peers(); len(peers) != 3 {
+		t.Fatalf("missing peers: %v", peers)
 	}
-	if len(followers[1].peers) != 2 {
-		t.Fatalf("missing peer")
+	if peers, _ := followers[1].peerStore.Peers(); len(peers) != 3 {
+		t.Fatalf("missing peers: %v", peers)
 	}
 
 	// Should be a follower now
-	if raft.State() != Follower {
-		t.Fatalf("bad state: %v", raft.State())
+	if follower.State() != Follower {
+		t.Fatalf("bad state: %v", follower.State())
 	}
 }
 
@@ -1080,7 +1069,7 @@ func TestRaft_LeaderLeaseExpire(t *testing.T) {
 	leader := c.Leader()
 
 	// Wait until we have a followers
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 1 {
 		time.Sleep(10 * time.Millisecond)
@@ -1192,7 +1181,7 @@ func TestRaft_VerifyLeader_Fail(t *testing.T) {
 	leader := c.Leader()
 
 	// Wait until we have a followers
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 1 {
 		time.Sleep(10 * time.Millisecond)
@@ -1225,7 +1214,7 @@ func TestRaft_VerifyLeader_ParitalConnect(t *testing.T) {
 	leader := c.Leader()
 
 	// Wait until we have a followers
-	limit := time.Now().Add(100 * time.Millisecond)
+	limit := time.Now().Add(200 * time.Millisecond)
 	var followers []*Raft
 	for time.Now().Before(limit) && len(followers) != 2 {
 		time.Sleep(10 * time.Millisecond)
