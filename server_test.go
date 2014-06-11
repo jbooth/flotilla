@@ -51,6 +51,14 @@ func TestServer(t *testing.T) {
 			fmt.Printf("Leader is server %d\n", leaderIdx)
 		}
 	}
+
+	//leader := servers[leaderIdx]
+	notLeaders := make([]DB, 0, 0)
+	for idx, db := range servers {
+		if idx != leaderIdx {
+			notLeaders = append(notLeaders, db)
+		}
+	}
 	// execute command from leader, test results
 
 	// execute from follower, test results on leader & follower

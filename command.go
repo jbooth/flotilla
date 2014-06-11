@@ -8,14 +8,50 @@ import (
 // some default commands
 func defaultCommands() map[string]Command {
 	return map[string]Command{
-		"Put":              Put,
-		"PutIfAbsent":      PutIfAbsent,
-		"CompareAndSwap":   CompareAndSwap,
-		"CompareAndRemove": CompareAndRemove,
-		"Remove":           Remove,
-		"Noop":             Noop,
+		"Put":              put,
+		"PutIfAbsent":      putIfAbsent,
+		"CompareAndSwap":   compareAndSwap,
+		"CompareAndRemove": compareAndRemove,
+		"Remove":           remove,
+		"Noop":             noop,
 	}
 
+}
+
+// wrapper for default commands
+
+type dbOps struct {
+	BaseDB
+}
+
+func (d dbOps) Put(dbName string, key, val []byte) <-chan Result {
+	args := [][]byte{[]byte(dbName), key, val}
+	return d.Command("Put", args)
+}
+
+func (d dbOps) PutIfAbsent(dbName string, key, val []byte) <-chan Result {
+	args := [][]byte{[]byte(dbName), key, val}
+	return d.Command("PutIfAbsent", args)
+}
+
+func (d dbOps) CompareAndSwap(dbName string, key, expectedVal, setVal []byte) <-chan Result {
+	args := [][]byte{[]byte(dbName), key, expectedVal, setVal}
+	return d.Command("CompareAndSwap", args)
+}
+
+func (d dbOps) Remove(dbName string, key []byte) <-chan Result {
+	args := [][]byte{[]byte(dbName), key}
+	return d.Command("Remove", args)
+}
+
+func (d dbOps) CompareAndRemove(dbName string, key, expectedVal []byte) <-chan Result {
+	args := [][]byte{[]byte(dbName), key, expectedVal}
+	return d.Command("Remove", args)
+}
+
+func (d dbOps) Barrier() <-chan Result {
+	args := [][]byte{}
+	return d.Command("Noop", args)
 }
 
 // put
@@ -23,7 +59,7 @@ func defaultCommands() map[string]Command {
 // arg1: key
 // arg2: value
 // returns nil
-func Put(args [][]byte, txn WriteTxn) ([]byte, error) {
+func put(args [][]byte, txn WriteTxn) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, fmt.Errorf("Put needs 3 arguments!  Got %d args", len(args))
 	}
@@ -47,7 +83,7 @@ func Put(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg1:  key
 // arg2:  value
 // return:  [1] if added, [0] otherwise
-func PutIfAbsent(args [][]byte, txn WriteTxn) ([]byte, error) {
+func putIfAbsent(args [][]byte, txn WriteTxn) ([]byte, error) {
 	dbName := string(args[0])
 	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	if err != nil {
@@ -73,7 +109,7 @@ func PutIfAbsent(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg2: expectedValue
 // arg3: newValue
 // return: new row contents as []byte
-func CompareAndSwap(args [][]byte, txn WriteTxn) ([]byte, error) {
+func compareAndSwap(args [][]byte, txn WriteTxn) ([]byte, error) {
 	dbName := string(args[0])
 	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	existingVal, err := txn.Get(dbi, args[1])
@@ -98,7 +134,7 @@ func CompareAndSwap(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg0: dbName
 // arg1: key
 // returns nil
-func Remove(args [][]byte, txn WriteTxn) ([]byte, error) {
+func remove(args [][]byte, txn WriteTxn) ([]byte, error) {
 	dbName := string(args[0])
 	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	if err != nil {
@@ -118,7 +154,7 @@ func Remove(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg1: key
 // arg2: expectedVal
 // ret:  [1] if removed, [0] otherwise
-func CompareAndRemove(args [][]byte, txn WriteTxn) ([]byte, error) {
+func compareAndRemove(args [][]byte, txn WriteTxn) ([]byte, error) {
 	dbName := string(args[0])
 	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
 	existingVal, err := txn.Get(dbi, args[1])
@@ -139,7 +175,7 @@ func CompareAndRemove(args [][]byte, txn WriteTxn) ([]byte, error) {
 	}
 }
 
-func Noop(args [][]byte, txn WriteTxn) ([]byte, error) {
+func noop(args [][]byte, txn WriteTxn) ([]byte, error) {
 	return nil, nil
 }
 

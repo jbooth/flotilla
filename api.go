@@ -11,7 +11,7 @@ import (
 // and all updates move through that leader in single-threaded fashion and distributed
 // to followers in a consistent ordering.
 // Read operations are done against local data.
-type DB interface {
+type BaseDB interface {
 	// Opens a read transaction from our local copy of the database
 	// This transaction represents a snapshot in time.  Concurrent and
 	// subsequent writes will not affect it or be visible.
@@ -21,7 +21,7 @@ type DB interface {
 	// executed from this node.
 	Read() (Txn, error)
 
-	// Executes a command on the leader of the cluster, wherever that may be.
+	// Executes a user defined command on the leader of the cluster, wherever that may be.
 	// Commands are executed in a fixed, single-threaded order on the leader
 	// and propagated to the cluster in a log where they are applied.
 	// Result will not become available until the command has been processed
@@ -29,12 +29,12 @@ type DB interface {
 	//
 	// Visibility:  Upon receiving a successful Result from the returned channel,
 	// our command and all previously successful commands cluster-wide
-	// have been committed to local storage, and will be visible to all future
-	// Read() Txns on this node.
-	// Other nodes aside from this node and the master are guaranteed to execute
+	// have been committed to the leader and to local storage,
+	// and will be visible to all future Read() Txns on this node or the leader.
+	// Other nodes aside from this node and the leader are guaranteed to execute
 	// all commands in the same order, guaranteeing consistency with concurrent
-	// commands across the cluster, but are not guaranteed to have received
-	// this command yet.
+	// commands across the cluster, but are not necessarily guaranteed
+	// to have received this command yet.
 	Command(cmdName string, args [][]byte) <-chan Result
 
 	// if we're leader
@@ -43,14 +43,26 @@ type DB interface {
 	// leader addr
 	Leader() net.Addr
 
-	// Issues a no-op command to the leader and blocks until we've received it.
-	// On success, any previous command cluster-wide which the leader processed
-	// before receiving our Rsync request is guaranteed to be visible
-	// to future Read() Txns.
-	Rsync() error
-
 	// shuts down this instance
 	Close() error
+}
+
+// we implement a few standard utility ops on top of the BaseDB
+type DB interface {
+	BaseDB
+
+	// built-in Put command, returns empty bytes
+	Put(dbName string, key, val []byte) <-chan Result
+	// built-in Remove command, returns empty bytes
+	Remove(dbName string, key []byte) <-chan Result
+	// built-in PutIfAbsent command, returns [1] if put succeeded, [0] if not
+	PutIfAbsent(dbName string, key, val []byte) <-chan Result
+	// built-in Compare and Swap command, returns value after execution
+	CompareAndSwap(dbName string, key, expectedVal, setVal []byte) <-chan Result
+	// built-in Compare and Remove, returns [1] if removed, [0] if not
+	CompareAndRemove(dbNAme string, key, expectedVal []byte) <-chan Result
+	// No-op command, useful for creating a happens-before barrier, returns empty bytes
+	Barrier() <-chan Result
 }
 
 // Commands are registered with members of the cluster on startup

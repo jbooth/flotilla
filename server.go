@@ -97,7 +97,7 @@ func NewDBXtra(
 		leaderConn: nil,
 		lg:         log.New(logOut, "flotilla", log.LstdFlags),
 	}
-	return s, nil
+	return dbOps{s}, nil
 }
 
 type server struct {
