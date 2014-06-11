@@ -52,7 +52,7 @@ func TestServer(t *testing.T) {
 		}
 	}
 
-	//leader := servers[leaderIdx]
+	leader := servers[leaderIdx]
 	notLeaders := make([]DB, 0, 0)
 	for idx, db := range servers {
 		if idx != leaderIdx {
@@ -60,7 +60,23 @@ func TestServer(t *testing.T) {
 		}
 	}
 	// execute command from leader, test results
-
+	dbName := "test"
+	res := <-leader.Put(dbName, []byte("testKey1"), []byte("testVal1"))
+	if res.Err != nil {
+		t.Fatal(err)
+	}
+	reader, err := leader.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbi, err := reader.DBIOpen(&dbName, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	val, err := reader.Get(dbi, []byte("testKey1"))
+	if string(val) != "testVal1" {
+		t.Fatalf("Expected val testVal1 for key testKey1!  Got %s", string(val))
+	}
 	// execute from follower, test results on leader & follower
 
 	// kill leader, check for new leader
