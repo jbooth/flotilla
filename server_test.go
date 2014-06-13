@@ -59,8 +59,10 @@ func TestServer(t *testing.T) {
 			notLeaders = append(notLeaders, db)
 		}
 	}
-	// execute command from leader, test results
 	dbName := "test"
+	// execute command from leader, test results
+	fmt.Println("Testing put to leader")
+
 	res := <-leader.Put(dbName, []byte("testKey1"), []byte("testVal1"))
 	if res.Err != nil {
 		t.Fatal(err)
@@ -77,8 +79,40 @@ func TestServer(t *testing.T) {
 	if string(val) != "testVal1" {
 		t.Fatalf("Expected val testVal1 for key testKey1!  Got %s", string(val))
 	}
+	reader.Abort()
 	// execute from follower, test results on leader & follower
-
+	fmt.Println("Testing put to follower")
+	res = <-notLeaders[0].Put(dbName, []byte("testKey1"), []byte("testVal1"))
+	if res.Err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("Put to follower succeeded")
+	reader, err = leader.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbi, err = reader.DBIOpen(&dbName, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	val, err = reader.Get(dbi, []byte("testKey1"))
+	if string(val) != "testVal1" {
+		t.Fatalf("Expected val testVal1 for key testKey1!  Got %s", string(val))
+	}
+	reader.Abort()
+	reader, err = notLeaders[0].Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbi, err = reader.DBIOpen(&dbName, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	val, err = reader.Get(dbi, []byte("testKey1"))
+	if string(val) != "testVal1" {
+		t.Fatalf("Expected val testVal1 for key testKey1!  Got %s", string(val))
+	}
+	reader.Abort()
 	// kill leader, check for new leader
 
 	// execute some more commands

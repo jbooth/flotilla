@@ -87,7 +87,6 @@ func NewDBXtra(
 	if err != nil {
 		return nil, err
 	}
-
 	s := &server{
 		raft:       raft,
 		state:      state,
@@ -97,6 +96,9 @@ func NewDBXtra(
 		leaderConn: nil,
 		lg:         log.New(logOut, "flotilla", log.LstdFlags),
 	}
+	// serve followers
+	go s.serveFollowers()
+	// wrap with standard ops
 	return dbOps{s}, nil
 }
 
@@ -180,6 +182,17 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 	return raft, nil
 }
 
+func (s *server) serveFollowers() {
+	for {
+		conn, err := s.rpcLayer.Accept()
+		if err != nil {
+			s.lg.Printf("ERROR accepting from %s : %s", s.rpcLayer.Addr().String(), err)
+			return
+		}
+		go serveFollower(s.lg, conn, s)
+	}
+}
+
 // returns addr of leader
 func (s *server) Leader() net.Addr {
 	return s.raft.Leader()
@@ -221,7 +234,7 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 	s.leaderLock.Lock()
 	defer s.leaderLock.Unlock()
 	var err error
-	for s.leaderConn == nil || s.Leader() != s.leaderConn.remoteAddr() {
+	if s.leaderConn == nil || s.Leader() != s.leaderConn.remoteAddr() {
 		// reconnect
 		if s.leaderConn != nil {
 			s.leaderConn.c.Close()
@@ -230,12 +243,17 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 		if err != nil {
 			return nil, fmt.Errorf("Couldn't connect to leader at %s", s.Leader().String())
 		}
+		s.lg.Printf("Connecting to leader %s from follower %s\n", s.Leader().String(), s.rpcLayer.Addr().String())
 		s.leaderConn, err = newConnToLeader(newConn, s.rpcLayer.Addr().String(), s.lg)
 		if err != nil {
+			s.lg.Printf("Got error connecting to leader %s from follower %s : %s", s.Leader().String(), s.rpcLayer.Addr().String(), err)
 			return nil, err
 		}
+		s.lg.Printf("Connected to leader, reported addr %s connected addr %s", s.Leader(), s.leaderConn.remoteAddr())
 	}
+	s.lg.Printf("Creating new command in dispatchToLeader")
 	cb := s.state.newCommand()
+	s.lg.Printf("Forwarding command in dispatchToLeader")
 	err = s.leaderConn.forwardCommand(cb, cmd, args)
 	if err != nil {
 		cb.cancel()
