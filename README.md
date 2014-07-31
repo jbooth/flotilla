@@ -18,6 +18,19 @@ This means we can give each write transaction a single atomic and consistent vie
 This allows for the following simple API:
 
 ```go
+// Commands are registered with members of the cluster on startup, and can be executed from 
+// any member of the cluster in a consistent fashion.
+// 
+// Do not leak txn handles or cursor handles outside of the execution of a command.
+// Keep these consistent across machines!  Consider using versioning in your
+// command names.
+type Command func(args [][]byte, txn WriteTxn) ([]byte, error)
+
+type Result struct {
+	Response []byte
+	Err      error
+}
+
 type DB interface {
 	// Opens a read transaction from our local copy of the database
 	// This transaction represents a snapshot in time.  Concurrent and
@@ -60,4 +73,6 @@ type DB interface {
 }
 ```
 
-See the DB constructors, tests and hopefully-written-soon examples for how to set up a cluster.
+See api.go for more details on what you can do with a ReadTxn and a WriteTxn.  (basically, get, scan, put)
+
+See the DB constructors in server.go, tests and hopefully-written-soon examples for how to set up a cluster.
