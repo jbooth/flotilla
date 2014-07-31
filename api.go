@@ -11,7 +11,7 @@ import (
 // and all updates move through that leader in single-threaded fashion and distributed
 // to followers in a consistent ordering.
 // Read operations are done against local data.
-type BaseDB interface {
+type DB interface {
 	// Opens a read transaction from our local copy of the database
 	// This transaction represents a snapshot in time.  Concurrent and
 	// subsequent writes will not affect it or be visible.
@@ -19,13 +19,17 @@ type BaseDB interface {
 	// Each Txn opened is guaranteed to be able to see the results of any
 	// command, cluster-wide, that completed before the last successful command
 	// executed from this node.
+	//
+	// If we are not leader, this command will execute a no-op command through raft before
+	// returning a new txn in order to guarantee happens-before ordering
+	// for anything that reached the leader before we called Read()
 	Read() (Txn, error)
 
 	// Executes a user defined command on the leader of the cluster, wherever that may be.
 	// Commands are executed in a fixed, single-threaded order on the leader
 	// and propagated to the cluster in a log where they are applied.
-	// Result will not become available until the command has been processed
-	// on this node.
+	// Returns immediately, but Result will not become available on the returned chan until
+	// the command has been processed on the leader and replicated on this node.
 	//
 	// Visibility:  Upon receiving a successful Result from the returned channel,
 	// our command and all previously successful commands cluster-wide
@@ -37,10 +41,11 @@ type BaseDB interface {
 	// to have received this command yet.
 	Command(cmdName string, args [][]byte) <-chan Result
 
-	// if we're leader
+	// returns true if we're leader, supplied for optimization purposes only.
+	// you should not be polling this for correctness reasons, all state changes should happen as Commands
 	IsLeader() bool
 
-	// leader addr
+	// leader addr, same disclaimer as IsLeader()
 	Leader() net.Addr
 
 	// shuts down this instance
@@ -48,8 +53,8 @@ type BaseDB interface {
 }
 
 // we implement a few standard utility ops on top of the BaseDB
-type DB interface {
-	BaseDB
+type DefaultOpsDB interface {
+	DB
 
 	// built-in Put command, returns empty bytes
 	Put(dbName string, key, val []byte) <-chan Result

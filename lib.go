@@ -21,7 +21,7 @@ func defaultCommands() map[string]Command {
 // wrapper for default commands
 
 type dbOps struct {
-	BaseDB
+	DB
 }
 
 func (d dbOps) Put(dbName string, key, val []byte) <-chan Result {

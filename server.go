@@ -17,7 +17,7 @@ var (
 )
 
 // launches a new DB serving out of dataDir
-func NewDB(peers []string, dataDir string, bindAddr string, ops map[string]Command) (DB, error) {
+func NewDefaultDB(peers []string, dataDir string, bindAddr string, ops map[string]Command) (DefaultOpsDB, error) {
 	//_, bindPort, err := net.SplitHostPort(bindAddr)
 	//if err != nil {
 	//	return nil, err
@@ -34,7 +34,7 @@ func NewDB(peers []string, dataDir string, bindAddr string, ops map[string]Comma
 		return nil, err
 	}
 	fmt.Printf("Calling newdbxtra with peers %+v\n", peers)
-	return NewDBXtra(
+	db,err := NewDB(
 		peers,
 		dataDir,
 		listen,
@@ -42,11 +42,17 @@ func NewDB(peers []string, dataDir string, bindAddr string, ops map[string]Comma
 		defaultCommands(),
 		os.Stderr,
 	)
+	if err != nil {
+		return nil,err
+	}
+
+	// wrap with standard ops
+	return dbOps{db}, nil
 }
 
 // Instantiates a new DB serving the ops provided, using the provided dataDir and listener
-// If Peers is empty, we start as leader.  Otherwise, connect to the existing leader.
-func NewDBXtra(
+// If Peers is empty, we start as the sole leader.  Otherwise, connect to the existing leader.
+func NewDB(
 	peers []string,
 	dataDir string,
 	listen net.Listener,
@@ -98,8 +104,7 @@ func NewDBXtra(
 	}
 	// serve followers
 	go s.serveFollowers()
-	// wrap with standard ops
-	return dbOps{s}, nil
+	return s,nil
 }
 
 type server struct {
