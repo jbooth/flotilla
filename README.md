@@ -12,8 +12,8 @@ Programmable -- All write modifications are done via user-defined functions.  Th
 ==
 Architecture
 
-Flotilla is based on a straightforward combination of the Raft algorithm (link) with the LMDB embedded database.  In Raft, all cluster operations happen in a single, defined order.
-This means we can give each write transaction a single atomic and consistent view of the database, while allowing simultaneous readers due to LMDB's MVCC mechanisms.  
+Flotilla is based on a straightforward combination of the Raft algorithm (link) with the LMDB embedded database.  In Raft, all cluster operations happen in a single, defined order.  Operations don't have to be idempotent, because they'll be executed in the same order in each machine, guaranteeing the same final state.
+This means we can give each write transaction a single atomic and consistent view of the database, while allowing simultaneous readers due to LMDB's MVCC mechanisms.
 
 This allows for the following simple API:
 
@@ -40,7 +40,7 @@ type DB interface {
 	// command, cluster-wide, that completed before the last successful command
 	// executed from this node.
 	//
-	// If we are not leader, this command will execute a no-op command through raft before
+	// If we are not leader, this method will execute a no-op command through raft before
 	// returning a new txn in order to guarantee happens-before ordering
 	// for anything that reached the leader before we called Read()
 	Read() (Txn, error)
@@ -52,8 +52,8 @@ type DB interface {
 	// the command has been processed on the leader and replicated on this node.
 	//
 	// Visibility:  Upon receiving a successful Result from the returned channel,
-	// our command and all previously successful commands cluster-wide
-	// have been committed to the leader and to local storage,
+	// our command and all previously successful commands from any machine
+	// have been committed to the leader and to this machine's local storage,
 	// and will be visible to all future Read() Txns on this node or the leader.
 	// Other nodes aside from this node and the leader are guaranteed to execute
 	// all commands in the same order, guaranteeing consistency with concurrent
