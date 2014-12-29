@@ -20,6 +20,7 @@ func newenv(filePath string) (*env, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("Building new MDB env at %s\n", filePath)
 	// TODO make these configurable
 	e.SetMaxReaders(1024)
 	e.SetMaxDBs(1024)

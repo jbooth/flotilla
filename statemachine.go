@@ -29,6 +29,7 @@ type flotillaState struct {
 }
 
 func newFlotillaState(dbPath string, commands map[string]Command, addr string, lg *log.Logger) (*flotillaState, error) {
+	fmt.Printf("New flotilla state at path %s, listening on %s\n",dbPath,addr)
 	// current data stored here
 	dataPath := dbPath + "/data"
 	if err := os.MkdirAll(dataPath, 0755); err != nil {
@@ -73,6 +74,7 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	// execute command, get results
 	cmdExec, ok := f.commands[cmd.Cmd]
 	if !ok {
+		txn.Abort()
 		return Result{nil, fmt.Errorf("No command registered with name %s", cmd.Cmd)}
 	}
 	retBytes, retErr := cmdExec(cmd.Args, txn)
