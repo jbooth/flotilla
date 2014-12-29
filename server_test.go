@@ -9,7 +9,7 @@ import (
 func TestServer(t *testing.T) {
 
 	// set up cluster of 3
-	servers := make([]DB, 3)
+	servers := make([]DefaultOpsDB, 3)
 	addrs := []string{"127.0.0.1:1203", "127.0.0.1:1204", "127.0.0.1:1205"}
 	dataDirs := make([]string, 3)
 	waitingUp := make([]chan error, 3)
@@ -23,7 +23,7 @@ func TestServer(t *testing.T) {
 		waitingUp[i] = make(chan error)
 		go func(j int) {
 			fmt.Printf("Initializing server %d\n", j)
-			servers[j], err = NewDB(
+			servers[j], err = NewDefaultDB(
 				addrs,
 				dataDirs[j],
 				addrs[j],
@@ -53,7 +53,7 @@ func TestServer(t *testing.T) {
 	}
 
 	leader := servers[leaderIdx]
-	notLeaders := make([]DB, 0, 0)
+	notLeaders := make([]DefaultOpsDB, 0, 0)
 	for idx, db := range servers {
 		if idx != leaderIdx {
 			notLeaders = append(notLeaders, db)

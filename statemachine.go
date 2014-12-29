@@ -69,6 +69,7 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	if err != nil {
 		return &Result{nil, err}
 	}
+	f.lg.Printf("Executing command name %s",cmd.Cmd)
 	// execute command, get results
 	cmdExec, ok := f.commands[cmd.Cmd]
 	if !ok {
