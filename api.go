@@ -55,7 +55,6 @@ type DB interface {
 // we implement a few standard utility ops on top of the BaseDB
 type DefaultOpsDB interface {
 	DB
-
 	// built-in Put command, returns empty bytes
 	Put(dbName string, key, val []byte) <-chan Result
 	// built-in Remove command, returns empty bytes

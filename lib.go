@@ -54,6 +54,7 @@ func (d dbOps) Barrier() <-chan Result {
 	return d.Command("Noop", args)
 }
 
+
 // put
 // arg0: dbName
 // arg1: key

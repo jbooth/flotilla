@@ -29,7 +29,7 @@ type flotillaState struct {
 }
 
 func newFlotillaState(dbPath string, commands map[string]Command, addr string, lg *log.Logger) (*flotillaState, error) {
-	fmt.Printf("New flotilla state at path %s, listening on %s\n",dbPath,addr)
+	fmt.Printf("New flotilla state at path %s, listening on %s\n", dbPath, addr)
 	// current data stored here
 	dataPath := dbPath + "/data"
 	if err := os.MkdirAll(dataPath, 0755); err != nil {
@@ -70,16 +70,16 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	if err != nil {
 		return &Result{nil, err}
 	}
-	f.lg.Printf("Executing command name %s",cmd.Cmd)
+	f.lg.Printf("Executing command name %s", cmd.Cmd)
 	// execute command, get results
 	cmdExec, ok := f.commands[cmd.Cmd]
+	result := Result{nil,nil}
 	if !ok {
-		txn.Abort()
-		return Result{nil, fmt.Errorf("No command registered with name %s", cmd.Cmd)}
+		result.Err = fmt.Errorf("No command registered with name %s", cmd.Cmd)
+	} else {
+		result.Response, result.Err =  cmdExec(cmd.Args, txn)
 	}
-	retBytes, retErr := cmdExec(cmd.Args, txn)
-	result := Result{retBytes, retErr}
-	// confirm txn handle closed (our txn wrapper keeps track of state)
+	// confirm txn handle closed (our txn wrapper keeps track of state so we don't abort committed txn)
 	txn.Abort()
 	// check for callback
 	f.l.Lock()

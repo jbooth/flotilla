@@ -18,12 +18,6 @@ var (
 
 // launches a new DB serving out of dataDir
 func NewDefaultDB(peers []string, dataDir string, bindAddr string, ops map[string]Command) (DefaultOpsDB, error) {
-	//_, bindPort, err := net.SplitHostPort(bindAddr)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//bindAddr = fmt.Sprintf("0.0.0.0:%s", bindPort)
-	//fmt.Printf("Resolving for bind: %s\n", bindAddr)
 	laddr, err := net.ResolveTCPAddr("tcp", bindAddr)
 	if err != nil {
 		return nil, err
@@ -34,7 +28,7 @@ func NewDefaultDB(peers []string, dataDir string, bindAddr string, ops map[strin
 		return nil, err
 	}
 	fmt.Printf("Calling newdbxtra with peers %+v\n", peers)
-	db,err := NewDB(
+	db, err := NewDB(
 		peers,
 		dataDir,
 		listen,
@@ -43,7 +37,7 @@ func NewDefaultDB(peers []string, dataDir string, bindAddr string, ops map[strin
 		os.Stderr,
 	)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
 
 	// wrap with standard ops
@@ -70,10 +64,13 @@ func NewDB(
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, err
 	}
-	// user supplied commands are prefixed with "user."
 	commandsForStateMachine := defaultCommands()
 	for cmd, cmdExec := range commands {
-		commandsForStateMachine["user."+cmd] = cmdExec
+		_,ok := commandsForStateMachine[cmd]
+		if ok {
+			lg.Printf("WARNING overriding command %s with user-defined command",cmd)
+		}
+		commandsForStateMachine[cmd] = cmdExec
 	}
 	state, err := newFlotillaState(
 		mdbDir,
@@ -104,7 +101,7 @@ func NewDB(
 	}
 	// serve followers
 	go s.serveFollowers()
-	return s,nil
+	return s, nil
 }
 
 type server struct {

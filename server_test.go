@@ -15,10 +15,14 @@ func TestServer(t *testing.T) {
 	waitingUp := make([]chan error, 3)
 	var err error
 
+	cmds := defaultCommands()
+	cmds["err"] = alwaysReturnsError
+	cmds["get"] = get
+
 	for i := 0; i < 3; i++ {
 		dataDirs[i] = os.TempDir() + fmt.Sprintf("/flot_test_%d", i)
 		chkPanic(os.RemoveAll(dataDirs[i]))
-		chkPanic(os.MkdirAll(dataDirs[i], 0777))
+		chkPanic(os.MkdirAll(dataDirs[i], os.FileMode(0777)))
 		// start first server with cluster of 1 so it elects self
 		waitingUp[i] = make(chan error)
 		go func(j int) {
@@ -27,7 +31,7 @@ func TestServer(t *testing.T) {
 				addrs,
 				dataDirs[j],
 				addrs[j],
-				defaultCommands(),
+				cmds,
 			)
 			waitingUp[j] <- err
 		}(i)
@@ -67,6 +71,16 @@ func TestServer(t *testing.T) {
 	if res.Err != nil {
 		t.Fatal(err)
 	}
+	// transactional read
+	res = <- leader.Command("get", [][]byte{[]byte(dbName),[]byte("testKey1")})
+	if res.Err != nil {
+		t.Fatal(err)
+	}
+	if ! bytesEqual(res.Response, []byte("testVal1")) {
+		t.Fatal(fmt.Errorf("Bytes not equal coming back from server, expected testVal1 got %s", string(res.Response)))
+	}
+
+	// fast path read
 	reader, err := leader.Read()
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +127,17 @@ func TestServer(t *testing.T) {
 		t.Fatalf("Expected val testVal1 for key testKey1!  Got %s", string(val))
 	}
 	reader.Abort()
+	// check a non-registered custom command, should get error
+	res = <-servers[0].Command("NOTHERE", [][]byte{})
+	if res.Err == nil {
+		t.Fatalf("Should have gotten error for invalid command!")
+	}
+	// check a command returning error, shoult get it
+	res = <-servers[0].Command("err",[][]byte{})
+	if res.Err == nil {
+		t.Fatalf("Should have gotten error for command with error")
+	}
+
 	// kill leader, check for new leader
 
 	// execute some more commands
@@ -122,8 +147,50 @@ func TestServer(t *testing.T) {
 	// execute commands from node 0 (now follower)
 }
 
+
+var alwaysReturnsError Command = func(args [][]byte, txn WriteTxn) ([]byte, error) {
+	return nil, fmt.Errorf("LOL error")
+}
+
+
+// transactional get for testing get commands over the wire
+// arg0: dbName
+// arg1: key
+func get(args [][]byte, txn WriteTxn) ([]byte, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("Get needs 2 arguments!  Got %d args", len(args))
+	}
+	dbName := string(args[0])
+	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
+	if err != nil {
+		txn.Abort()
+		return nil, err
+	}
+	ret, err := txn.Get(dbi, args[1])
+	if err != nil {
+		txn.Abort()
+		return nil, err
+	}
+	txn.Abort()
+	return ret, err
+}
+
 func chkPanic(err error) {
 	if err != nil {
 		panic(err)
 	}
 }
+
+
+//func bytesEqual(a []byte, b []byte) bool {
+//	// both nil is false
+//	if (a == nil || b == nil || len(a) != len(b)) {
+//		return false
+//	}
+//	for idx,v := range a {
+//		if b[idx] != v {
+//			return false
+//		}
+//	}
+//	return true
+//}
