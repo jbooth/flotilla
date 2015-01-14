@@ -22,12 +22,10 @@ func NewDefaultDB(peers []string, dataDir string, bindAddr string, ops map[strin
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Starting listener on %s\n", bindAddr)
 	listen, err := net.ListenTCP("tcp", laddr)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Calling newdbxtra with peers %+v\n", peers)
 	db, err := NewDB(
 		peers,
 		dataDir,
@@ -53,8 +51,8 @@ func NewDB(
 	dialer func(string, time.Duration) (net.Conn, error),
 	commands map[string]Command,
 	logOut io.Writer) (DB, error) {
-	fmt.Printf("Starting server with peers %+v, dataDir %s\n", peers, dataDir)
 	lg := log.New(logOut, "flotilla", log.LstdFlags)
+	lg.Printf("Starting server with peers %+v, dataDir %s\n", peers, dataDir)
 	raftDir := dataDir + "/raft"
 	mdbDir := dataDir + "/mdb"
 	// make sure dirs exist
@@ -132,7 +130,7 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 	trans := raft.NewNetworkTransport(streams, 3, 10*time.Second, logOut)
 
 	// Setup the peer store
-	fmt.Printf("Resolving peers %+v\n", peers)
+	fmt.Fprintf(logOut, "server.newRaft Resolving peers %+v", peers)
 	peerAddrs := make([]net.Addr, len(peers), len(peers))
 	for idx, p := range peers {
 		peerAddrs[idx], err = net.ResolveTCPAddr("tcp", p)
@@ -140,7 +138,7 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 			return nil, err
 		}
 	}
-	fmt.Printf("Setting peer addrs %+v\n", peerAddrs)
+	fmt.Fprintf(logOut, "server.newRaft Setting peer addrs %+v", peerAddrs)
 	raftPeers := raft.NewJSONPeers(path, trans)
 	if err = raftPeers.SetPeers(peerAddrs); err != nil {
 		return nil, err
@@ -171,7 +169,7 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 	timeout := time.Now().Add(1 * time.Minute)
 	for {
 		leader := raft.Leader()
-		fmt.Printf("Identified leader %s from host %s\n", leader, trans.LocalAddr().String())
+		fmt.Fprintf(logOut, "server.newRaft Identified leader %s from host %s\n", leader, trans.LocalAddr().String())
 		if leader != nil {
 			break
 		} else {

@@ -29,7 +29,7 @@ type flotillaState struct {
 }
 
 func newFlotillaState(dbPath string, commands map[string]Command, addr string, lg *log.Logger) (*flotillaState, error) {
-	fmt.Printf("New flotilla state at path %s, listening on %s\n", dbPath, addr)
+	lg.Printf("New flotilla state at path %s, listening on %s\n", dbPath, addr)
 	// current data stored here
 	dataPath := dbPath + "/data"
 	if err := os.MkdirAll(dataPath, 0755); err != nil {
@@ -75,6 +75,7 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	cmdExec, ok := f.commands[cmd.Cmd]
 	result := Result{nil,nil}
 	if !ok {
+		f.lg.Printf("Received invalid command %s", cmd.Cmd)
 		result.Err = fmt.Errorf("No command registered with name %s", cmd.Cmd)
 	} else {
 		result.Response, result.Err =  cmdExec(cmd.Args, txn)
@@ -82,6 +83,7 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	// confirm txn handle closed (our txn wrapper keeps track of state so we don't abort committed txn)
 	txn.Abort()
 	// check for callback
+	f.lg.Printf("Finished command %s with result %s err %s",cmd.Cmd,string(result.Response),result.Err)
 	f.l.Lock()
 	defer f.l.Unlock()
 	cb, ok := f.localCallbacks[cmd.Reqno]
