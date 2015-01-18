@@ -25,7 +25,8 @@ func newenv(filePath string) (*env, error) {
 	e.SetMaxReaders(1024)
 	e.SetMaxDBs(1024)
 	e.SetMapSize(32 * 1024 * 1024 * 1024)
-	err = e.Open(filePath, 0, 0766)
+	// disable fsync because we are guaranteeing consistency/durability via raft snapshotting and edit logs
+	err = e.Open(filePath, mdb.WRITEMAP | mdb.NOSYNC | mdb.NOTLS, 0766)
 	if err != nil {
 		e.Close()
 		return nil, err
@@ -71,6 +72,8 @@ func (e *env) Close() error {
 	e.l.Lock()
 	defer e.l.Unlock()
 	e.shouldClose = true
+	e.e.Sync(1)
+	e.e.Close()
 	return nil
 }
 
