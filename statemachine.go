@@ -2,8 +2,8 @@ package flotilla
 
 import (
 	"fmt"
-	"github.com/jbooth/flotilla/mdb"
-	"github.com/jbooth/flotilla/raft"
+	"github.com/armon/gomdb"
+	"github.com/hashicorp/raft"
 	"io"
 	"log"
 	"os"
@@ -73,17 +73,17 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	f.lg.Printf("Executing command name %s", cmd.Cmd)
 	// execute command, get results
 	cmdExec, ok := f.commands[cmd.Cmd]
-	result := Result{nil,nil}
+	result := Result{nil, nil}
 	if !ok {
 		f.lg.Printf("Received invalid command %s", cmd.Cmd)
 		result.Err = fmt.Errorf("No command registered with name %s", cmd.Cmd)
 	} else {
-		result.Response, result.Err =  cmdExec(cmd.Args, txn)
+		result.Response, result.Err = cmdExec(cmd.Args, txn)
 	}
 	// confirm txn handle closed (our txn wrapper keeps track of state so we don't abort committed txn)
 	txn.Abort()
 	// check for callback
-	f.lg.Printf("Finished command %s with result %s err %s",cmd.Cmd,string(result.Response),result.Err)
+	f.lg.Printf("Finished command %s with result %s err %s", cmd.Cmd, string(result.Response), result.Err)
 	f.l.Lock()
 	defer f.l.Unlock()
 	cb, ok := f.localCallbacks[cmd.Reqno]
@@ -93,7 +93,7 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	return result
 }
 
-func (s *flotillaState) ReadTxn() (Txn, error) {
+func (s *flotillaState) ReadTxn() (*mdb.Txn, error) {
 	// lock to make sure we don't race with Restore()
 	s.l.Lock()
 	defer s.l.Unlock()
@@ -157,7 +157,7 @@ type flotillaSnapshot struct {
 // starts streaming snapshot into one end of pipe
 func (s *flotillaSnapshot) pipeCopy() {
 	defer s.pipeW.Close()
-	s.copyErr <- s.env.CopyFd(int(s.pipeW.Fd())) // buffered chan here
+	//s.copyErr <- s.env.CopyFd(int(s.pipeW.Fd())) // buffered chan here
 }
 
 // Persist should dump all necessary state to the WriteCloser,

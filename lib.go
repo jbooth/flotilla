@@ -2,7 +2,7 @@ package flotilla
 
 import (
 	"fmt"
-	"github.com/jbooth/flotilla/mdb"
+	mdb "github.com/armon/gomdb"
 )
 
 // some default commands
@@ -54,18 +54,17 @@ func (d dbOps) Barrier() <-chan Result {
 	return d.Command("Noop", args)
 }
 
-
 // put
 // arg0: dbName
 // arg1: key
 // arg2: value
 // returns nil
-func put(args [][]byte, txn WriteTxn) ([]byte, error) {
+func put(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, fmt.Errorf("Put needs 3 arguments!  Got %d args", len(args))
 	}
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -84,14 +83,14 @@ func put(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg1:  key
 // arg2:  value
 // return:  [1] if added, [0] otherwise
-func putIfAbsent(args [][]byte, txn WriteTxn) ([]byte, error) {
+func putIfAbsent(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
 	}
-	err = txn.Put(dbi, args[1], args[2], MDB_NOOVERWRITE)
+	err = txn.Put(dbi, args[1], args[2], mdb.NOOVERWRITE)
 	if err == mdb.KeyExist {
 		txn.Abort()
 		return []byte{0}, nil
@@ -110,9 +109,9 @@ func putIfAbsent(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg2: expectedValue
 // arg3: newValue
 // return: new row contents as []byte
-func compareAndSwap(args [][]byte, txn WriteTxn) ([]byte, error) {
+func compareAndSwap(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
 	existingVal, err := txn.Get(dbi, args[1])
 	if err != nil && err != mdb.NotFound {
 		txn.Abort()
@@ -135,9 +134,9 @@ func compareAndSwap(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg0: dbName
 // arg1: key
 // returns nil
-func remove(args [][]byte, txn WriteTxn) ([]byte, error) {
+func remove(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -155,9 +154,9 @@ func remove(args [][]byte, txn WriteTxn) ([]byte, error) {
 // arg1: key
 // arg2: expectedVal
 // ret:  [1] if removed, [0] otherwise
-func compareAndRemove(args [][]byte, txn WriteTxn) ([]byte, error) {
+func compareAndRemove(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
 	existingVal, err := txn.Get(dbi, args[1])
 	if err != nil && err != mdb.NotFound {
 		txn.Abort()
@@ -176,7 +175,7 @@ func compareAndRemove(args [][]byte, txn WriteTxn) ([]byte, error) {
 	}
 }
 
-func noop(args [][]byte, txn WriteTxn) ([]byte, error) {
+func noop(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	return nil, nil
 }
 
