@@ -2,6 +2,7 @@ package flotilla
 
 import (
 	"fmt"
+	mdb "github.com/armon/gomdb"
 	"os"
 	"testing"
 )
@@ -72,11 +73,11 @@ func TestServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	// transactional read
-	res = <- leader.Command("get", [][]byte{[]byte(dbName),[]byte("testKey1")})
+	res = <-leader.Command("get", [][]byte{[]byte(dbName), []byte("testKey1")})
 	if res.Err != nil {
 		t.Fatal(err)
 	}
-	if ! bytesEqual(res.Response, []byte("testVal1")) {
+	if !bytesEqual(res.Response, []byte("testVal1")) {
 		t.Fatal(fmt.Errorf("Bytes not equal coming back from server, expected testVal1 got %s", string(res.Response)))
 	}
 
@@ -85,7 +86,7 @@ func TestServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbi, err := reader.DBIOpen(&dbName, 0)
+	dbi, err := reader.DBIOpen(dbName, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbi, err = reader.DBIOpen(&dbName, 0)
+	dbi, err = reader.DBIOpen(dbName, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbi, err = reader.DBIOpen(&dbName, 0)
+	dbi, err = reader.DBIOpen(dbName, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ func TestServer(t *testing.T) {
 		t.Fatalf("Should have gotten error for invalid command!")
 	}
 	// check a command returning error, shoult get it
-	res = <-servers[0].Command("err",[][]byte{})
+	res = <-servers[0].Command("err", [][]byte{})
 	if res.Err == nil {
 		t.Fatalf("Should have gotten error for command with error")
 	}
@@ -147,21 +148,19 @@ func TestServer(t *testing.T) {
 	// execute commands from node 0 (now follower)
 }
 
-
-var alwaysReturnsError Command = func(args [][]byte, txn WriteTxn) ([]byte, error) {
+var alwaysReturnsError Command = func(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	return nil, fmt.Errorf("LOL error")
 }
-
 
 // transactional get for testing get commands over the wire
 // arg0: dbName
 // arg1: key
-func get(args [][]byte, txn WriteTxn) ([]byte, error) {
+func get(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("Get needs 2 arguments!  Got %d args", len(args))
 	}
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(&dbName, MDB_CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -180,7 +179,6 @@ func chkPanic(err error) {
 		panic(err)
 	}
 }
-
 
 //func bytesEqual(a []byte, b []byte) bool {
 //	// both nil is false
