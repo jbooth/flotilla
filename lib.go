@@ -2,7 +2,7 @@ package flotilla
 
 import (
 	"fmt"
-	mdb "github.com/armon/gomdb"
+	mdb "github.com/jbooth/gomdb"
 )
 
 // some default commands

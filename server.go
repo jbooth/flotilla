@@ -2,9 +2,9 @@ package flotilla
 
 import (
 	"fmt"
-	mdb "github.com/armon/gomdb"
 	"github.com/hashicorp/raft"
-	raftmdb "github.com/hashicorp/raft-mdb"
+	mdb "github.com/jbooth/gomdb"
+	raftmdb "github.com/jbooth/raft-mdb"
 	"io"
 	"log"
 	"net"
