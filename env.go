@@ -2,7 +2,7 @@ package flotilla
 
 import (
 	"fmt"
-	"github.com/jbooth/flotilla/mdb"
+	mdb "github.com/armon/gomdb"
 	"sync"
 )
 
@@ -13,6 +13,7 @@ type env struct {
 	l           *sync.Mutex
 	numOpen     uint64
 	shouldClose bool
+	closed      bool
 }
 
 func newenv(filePath string) (*env, error) {
@@ -26,16 +27,16 @@ func newenv(filePath string) (*env, error) {
 	e.SetMaxDBs(1024)
 	e.SetMapSize(32 * 1024 * 1024 * 1024)
 	// disable fsync because we are guaranteeing consistency/durability via raft snapshotting and edit logs
-	err = e.Open(filePath, mdb.WRITEMAP | mdb.NOSYNC | mdb.NOTLS, 0766)
+	err = e.Open(filePath, mdb.WRITEMAP|mdb.NOSYNC|mdb.NOTLS, 0766)
 	if err != nil {
 		e.Close()
 		return nil, err
 	}
-	return &env{e, new(sync.Mutex), 0, false}, nil
+	return &env{e, new(sync.Mutex), 0, false, false}, nil
 }
 
 // opens a read transaction,
-func (e *env) readTxn() (Txn, error) {
+func (e *env) readTxn() (*mdb.Txn, error) {
 	e.l.Lock()
 	defer e.l.Unlock()
 	if e.shouldClose {
@@ -47,12 +48,12 @@ func (e *env) readTxn() (Txn, error) {
 		return nil, err
 	}
 	e.numOpen++
-	return &txn{t, e, false}, nil
+	return t, nil
 }
 
 // opens a write transaction, we don't track numOpen with these because
 // it shouldn't be called at the same time as a snapshot
-func (e *env) writeTxn() (WriteTxn, error) {
+func (e *env) writeTxn() (*mdb.Txn, error) {
 	e.l.Lock()
 	defer e.l.Unlock()
 	if e.shouldClose {
@@ -63,7 +64,21 @@ func (e *env) writeTxn() (WriteTxn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &writeTxn{t, false}, nil
+	return t, nil
+}
+
+// aborts transactionsuppressing any errors, and frees
+func (e *env) CloseTransaction(t *mdb.Txn) error {
+	t.Abort() // ignore error
+	e.l.Lock()
+	defer e.l.Unlock()
+	e.numOpen--
+	if e.shouldClose && e.numOpen == 0 && !e.closed {
+		e.e.Close()
+		e.closed = true
+	}
+	e.e.Close()
+	return nil
 }
 
 // marks this env as pending-closed.  closing the last open transaction will close
@@ -75,90 +90,4 @@ func (e *env) Close() error {
 	e.e.Sync(1)
 	e.e.Close()
 	return nil
-}
-
-// represents read transactions to an env that will clean up when closed
-// write transactions are already guaranteed not to overlap with a db re-init,
-// so they're just raw mdb.Txn handles
-type txn struct {
-	t      *mdb.Txn
-	e      *env
-	closed bool
-}
-
-func (t *txn) DBIOpen(name *string, flags uint) (mdb.DBI, error) {
-	return t.t.DBIOpen(name, flags)
-}
-
-func (t *txn) Drop(dbi mdb.DBI, del int) error {
-	return t.t.Drop(dbi, del)
-}
-func (t *txn) Get(dbi mdb.DBI, key []byte) ([]byte, error) {
-	return t.t.Get(dbi, key)
-}
-
-func (t *txn) CursorOpen(dbi mdb.DBI) (Cursor, error) {
-	return t.t.CursorOpen(dbi)
-}
-
-func (t *txn) Abort() {
-	if t.closed {
-		return
-	}
-	t.t.Abort()
-	t.e.l.Lock()
-	defer t.e.l.Unlock()
-	t.e.numOpen--
-	if t.e.shouldClose && t.e.numOpen == 0 {
-		t.e.e.Close()
-	}
-	t.closed = true
-}
-
-// wraps write Txn methods with some safety around close/abort,
-// so we can call multiple times to prevent leaks
-type writeTxn struct {
-	t      *mdb.Txn
-	closed bool
-}
-
-func (t *writeTxn) DBIOpen(name *string, flags uint) (mdb.DBI, error) {
-	return t.t.DBIOpen(name, flags)
-}
-
-func (t *writeTxn) Drop(dbi mdb.DBI, del int) error {
-	return t.t.Drop(dbi, del)
-}
-func (t *writeTxn) Get(dbi mdb.DBI, key []byte) ([]byte, error) {
-	return t.t.Get(dbi, key)
-}
-
-func (t *writeTxn) CursorOpen(dbi mdb.DBI) (Cursor, error) {
-	return t.t.CursorOpen(dbi)
-}
-
-func (t *writeTxn) Put(dbi mdb.DBI, key []byte, val []byte, flags uint) error {
-	return t.t.Put(dbi, key, val, flags)
-}
-
-func (t *writeTxn) Del(dbi mdb.DBI, key, val []byte) error {
-	return t.t.Del(dbi, key, val)
-}
-
-func (t *writeTxn) Abort() {
-	if t.closed {
-		return
-	}
-	t.t.Abort()
-	t.closed = true
-	return
-}
-
-func (t *writeTxn) Commit() error {
-	if t.closed {
-		return nil
-	}
-	err := t.t.Commit()
-	t.closed = true
-	return err
 }

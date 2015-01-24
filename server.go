@@ -2,7 +2,9 @@ package flotilla
 
 import (
 	"fmt"
-	"github.com/jbooth/flotilla/raft"
+	mdb "github.com/armon/gomdb"
+	"github.com/hashicorp/raft"
+	raftmdb "github.com/hashicorp/raft-mdb"
 	"io"
 	"log"
 	"net"
@@ -64,9 +66,9 @@ func NewDB(
 	}
 	commandsForStateMachine := defaultCommands()
 	for cmd, cmdExec := range commands {
-		_,ok := commandsForStateMachine[cmd]
+		_, ok := commandsForStateMachine[cmd]
 		if ok {
-			lg.Printf("WARNING overriding command %s with user-defined command",cmd)
+			lg.Printf("WARNING overriding command %s with user-defined command", cmd)
 		}
 		commandsForStateMachine[cmd] = cmdExec
 	}
@@ -114,7 +116,7 @@ type server struct {
 
 func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.FSM, logOut io.Writer) (*raft.Raft, error) {
 	// Create the MDB store for logs and stable storage, retain up to 8gb
-	store, err := raft.NewMDBStoreWithSize(path, 8*1024*1024*1024)
+	store, err := raftmdb.NewMDBStoreWithSize(path, 8*1024*1024*1024)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +264,7 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 	return cb, nil
 }
 
-func (s *server) Read() (Txn, error) {
+func (s *server) Read() (*mdb.Txn, error) {
 	return s.state.ReadTxn()
 }
 
