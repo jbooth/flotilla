@@ -101,6 +101,14 @@ func (env *Env) Close() error {
 	return nil
 }
 
+func (env *Env) CopyFd(fd int) error {
+	ret := C.mdb_env_copyfd(env._env, C.mdb_filehandle_t(fd))
+	if ret != SUCCESS {
+		return Errno(ret)
+	}
+	return nil
+}
+
 func (env *Env) Copy(path string) error {
 	cpath := C.CString(path)
 	defer C.free(unsafe.Pointer(cpath))
