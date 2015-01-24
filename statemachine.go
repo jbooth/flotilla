@@ -157,7 +157,7 @@ type flotillaSnapshot struct {
 // starts streaming snapshot into one end of pipe
 func (s *flotillaSnapshot) pipeCopy() {
 	defer s.pipeW.Close()
-	//s.copyErr <- s.env.CopyFd(int(s.pipeW.Fd())) // buffered chan here
+	s.copyErr <- s.env.CopyFd(int(s.pipeW.Fd())) // buffered chan here
 }
 
 // Persist should dump all necessary state to the WriteCloser,
