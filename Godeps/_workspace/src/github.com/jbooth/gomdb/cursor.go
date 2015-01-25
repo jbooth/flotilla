@@ -1,9 +1,7 @@
 package mdb
 
 /*
-#cgo freebsd CFLAGS: -DMDB_DSYNC=O_SYNC
-#cgo openbsd CFLAGS: -DMDB_DSYNC=O_SYNC
-#cgo netbsd CFLAGS: -DMDB_DSYNC=O_SYNC
+#cgo CFLAGS: -pthread -W -Wall -Wno-unused-parameter -Wbad-function-cast -O2 -g
 #include <stdlib.h>
 #include <stdio.h>
 #include "lmdb.h"
@@ -12,7 +10,6 @@ import "C"
 
 import (
 	"errors"
-	"unsafe"
 )
 
 // MDB_cursor_op
@@ -67,50 +64,37 @@ func (cursor *Cursor) MdbCursor() *C.MDB_cursor {
 }
 
 func (cursor *Cursor) Get(set_key []byte, op uint) (key, val []byte, err error) {
-	var ckey C.MDB_val
-	var cval C.MDB_val
-	if set_key != nil && (op == SET || op == SET_KEY || op == SET_RANGE) {
-		ckey.mv_size = C.size_t(len(set_key))
-		ckey.mv_data = unsafe.Pointer(&set_key[0])
+	k, v, err := cursor.GetVal(set_key, op)
+	if err != nil {
+		return nil, nil, err
 	}
-	ret := C.mdb_cursor_get(cursor._cursor, &ckey, &cval, C.MDB_cursor_op(op))
-	if ret != SUCCESS {
-		err = Errno(ret)
-		key = nil
-		val = nil
-		return
-	}
-	err = nil
-	key = C.GoBytes(ckey.mv_data, C.int(ckey.mv_size))
-	val = C.GoBytes(cval.mv_data, C.int(cval.mv_size))
-	return
+	return k.Bytes(), v.Bytes(), nil
+}
+
+func (cursor *Cursor) GetVal(key []byte, op uint) (Val, Val, error) {
+	ckey := Wrap(key)
+	var cval Val
+	ret := C.mdb_cursor_get(cursor._cursor, (*C.MDB_val)(&ckey), (*C.MDB_val)(&cval), C.MDB_cursor_op(op))
+	return ckey, cval, errno(ret)
 }
 
 func (cursor *Cursor) Put(key, val []byte, flags uint) error {
-	ckey := &C.MDB_val{mv_size: C.size_t(len(key)),
-		mv_data: unsafe.Pointer(&key[0])}
-	cval := &C.MDB_val{mv_size: C.size_t(len(val)),
-		mv_data: unsafe.Pointer(&val[0])}
-	ret := C.mdb_cursor_put(cursor._cursor, ckey, cval, C.uint(flags))
-	if ret != SUCCESS {
-		return Errno(ret)
-	}
-	return nil
+	ckey := Wrap(key)
+	cval := Wrap(val)
+	ret := C.mdb_cursor_put(cursor._cursor, (*C.MDB_val)(&ckey), (*C.MDB_val)(&cval), C.uint(flags))
+	return errno(ret)
 }
 
 func (cursor *Cursor) Del(flags uint) error {
 	ret := C.mdb_cursor_del(cursor._cursor, C.uint(flags))
-	if ret != SUCCESS {
-		return Errno(ret)
-	}
-	return nil
+	return errno(ret)
 }
 
 func (cursor *Cursor) Count() (uint64, error) {
 	var _size C.size_t
 	ret := C.mdb_cursor_count(cursor._cursor, &_size)
 	if ret != SUCCESS {
-		return 0, Errno(ret)
+		return 0, errno(ret)
 	}
 	return uint64(_size), nil
 }

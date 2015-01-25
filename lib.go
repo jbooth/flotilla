@@ -2,7 +2,7 @@ package flotilla
 
 import (
 	"fmt"
-	mdb "github.com/armon/gomdb"
+	mdb "github.com/jbooth/gomdb"
 )
 
 // some default commands
@@ -64,7 +64,7 @@ func put(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 		return nil, fmt.Errorf("Put needs 3 arguments!  Got %d args", len(args))
 	}
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(&dbName, mdb.CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -85,7 +85,7 @@ func put(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 // return:  [1] if added, [0] otherwise
 func putIfAbsent(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(&dbName, mdb.CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -111,7 +111,7 @@ func putIfAbsent(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 // return: new row contents as []byte
 func compareAndSwap(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(&dbName, mdb.CREATE) // create if not exists
 	existingVal, err := txn.Get(dbi, args[1])
 	if err != nil && err != mdb.NotFound {
 		txn.Abort()
@@ -136,7 +136,7 @@ func compareAndSwap(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 // returns nil
 func remove(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(&dbName, mdb.CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
@@ -156,7 +156,7 @@ func remove(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 // ret:  [1] if removed, [0] otherwise
 func compareAndRemove(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(&dbName, mdb.CREATE) // create if not exists
 	existingVal, err := txn.Get(dbi, args[1])
 	if err != nil && err != mdb.NotFound {
 		txn.Abort()

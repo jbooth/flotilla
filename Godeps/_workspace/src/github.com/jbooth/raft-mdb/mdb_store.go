@@ -2,8 +2,8 @@ package raftmdb
 
 import (
 	"fmt"
-	"github.com/armon/gomdb"
 	"github.com/hashicorp/raft"
+	"github.com/jbooth/gomdb"
 	"os"
 	"path/filepath"
 )
@@ -117,7 +117,7 @@ func (m *MDBStore) startTxn(readonly bool, open ...string) (*mdb.Txn, []mdb.DBI,
 
 	var dbs []mdb.DBI
 	for _, name := range open {
-		dbi, err := tx.DBIOpen(name, dbFlags)
+		dbi, err := tx.DBIOpen(&name, dbFlags)
 		if err != nil {
 			tx.Abort()
 			return nil, nil, err
@@ -270,12 +270,13 @@ func (m *MDBStore) innerDeleteRange(tx *mdb.Txn, dbis []mdb.DBI, minIdx, maxIdx 
 			// there is no further keys. We treat this as no more
 			// keys being found.
 			if num, ok := err.(mdb.Errno); ok && num == 22 {
+				println("errno 22")
 				err = mdb.NotFound
 			}
 		} else {
 			key, _, err = cursor.Get(nil, mdb.NEXT)
 		}
-		if err == mdb.NotFound || len(key) == 0 {
+		if err == mdb.NotFound {
 			break
 		} else if err != nil {
 			return num, err

@@ -2,7 +2,7 @@
 package flotilla
 
 import (
-	mdb "github.com/armon/gomdb"
+	mdb "github.com/jbooth/gomdb"
 	"net"
 )
 

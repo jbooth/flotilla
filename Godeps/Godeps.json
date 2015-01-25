@@ -7,10 +7,6 @@
 			"Rev": "9f6a9c50a111d7be8b8a201b0b7ee929f6cd1e91"
 		},
 		{
-			"ImportPath": "github.com/armon/gomdb",
-			"Rev": "151f2e08ef45cb0e57d694b2562f351955dff572"
-		},
-		{
 			"ImportPath": "github.com/hashicorp/go-msgpack/codec",
 			"Rev": "71c2886f5a673a35f909803f38ece5810165097b"
 		},
@@ -19,8 +15,16 @@
 			"Rev": "9ede2e87ca0ded646a8c8760116fcaac66564d7e"
 		},
 		{
-			"ImportPath": "github.com/hashicorp/raft-mdb",
-			"Rev": "6f52d0ce62a34e3f5bd29aa4d7068030d700d94a"
+			"ImportPath": "github.com/jbooth/gomdb",
+			"Rev": "e49039f3c53ab892b6ef85a73af365d3ddc46841"
+		},
+		{
+			"ImportPath": "github.com/jbooth/raft-mdb",
+			"Rev": "4aec21a232d3c56dc527465c30f3541cda719946"
+		},
+		{
+			"ImportPath": "github.com/ugorji/go/codec",
+			"Rev": "71c2886f5a673a35f909803f38ece5810165097b"
 		}
 	]
 }
