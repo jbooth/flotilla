@@ -39,7 +39,7 @@ func TestStateMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := "defaultDB"
-	dbi, err := read.DBIOpen(db, 0)
+	dbi, err := read.DBIOpen(&db, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestStateMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	db = "defaultDB"
-	dbi, err = read.DBIOpen(db, 0)
+	dbi, err = read.DBIOpen(&db, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestStateMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbi, err = read.DBIOpen(db, 0)
+	dbi, err = read.DBIOpen(&db, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestStateMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbi, err = read.DBIOpen(db, 0)
+	dbi, err = read.DBIOpen(&db, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

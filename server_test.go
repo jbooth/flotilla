@@ -86,7 +86,7 @@ func TestServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbi, err := reader.DBIOpen(dbName, 0)
+	dbi, err := reader.DBIOpen(&dbName, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbi, err = reader.DBIOpen(dbName, 0)
+	dbi, err = reader.DBIOpen(&dbName, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbi, err = reader.DBIOpen(dbName, 0)
+	dbi, err = reader.DBIOpen(&dbName, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func get(args [][]byte, txn *mdb.Txn) ([]byte, error) {
 		return nil, fmt.Errorf("Get needs 2 arguments!  Got %d args", len(args))
 	}
 	dbName := string(args[0])
-	dbi, err := txn.DBIOpen(dbName, mdb.CREATE) // create if not exists
+	dbi, err := txn.DBIOpen(&dbName, mdb.CREATE) // create if not exists
 	if err != nil {
 		txn.Abort()
 		return nil, err
