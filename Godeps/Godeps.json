@@ -1,0 +1,30 @@
+{
+	"ImportPath": "github.com/jbooth/flotilla",
+	"GoVersion": "go1.4.1",
+	"Deps": [
+		{
+			"ImportPath": "github.com/armon/go-metrics",
+			"Rev": "9f6a9c50a111d7be8b8a201b0b7ee929f6cd1e91"
+		},
+		{
+			"ImportPath": "github.com/hashicorp/go-msgpack/codec",
+			"Rev": "71c2886f5a673a35f909803f38ece5810165097b"
+		},
+		{
+			"ImportPath": "github.com/hashicorp/raft",
+			"Rev": "9ede2e87ca0ded646a8c8760116fcaac66564d7e"
+		},
+		{
+			"ImportPath": "github.com/jbooth/gomdb",
+			"Rev": "e49039f3c53ab892b6ef85a73af365d3ddc46841"
+		},
+		{
+			"ImportPath": "github.com/jbooth/raft-mdb",
+			"Rev": "4aec21a232d3c56dc527465c30f3541cda719946"
+		},
+		{
+			"ImportPath": "github.com/ugorji/go/codec",
+			"Rev": "71c2886f5a673a35f909803f38ece5810165097b"
+		}
+	]
+}
