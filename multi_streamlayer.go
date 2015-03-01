@@ -123,6 +123,7 @@ func (r *router) serve() {
 			}
 			r.chans[code[0]].conns <- conn
 		case toClose := <-r.closeRequests:
+			r.lg.Printf("Closing router listening on %s", r.listen.Addr().String())
 			close(r.chans[toClose.code].conns)
 			delete(r.chans, toClose.code)
 			toClose.resp <- true

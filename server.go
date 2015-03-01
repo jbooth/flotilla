@@ -28,7 +28,7 @@ func NewDefaultDB(peers []string, dataDir string, bindAddr string, ops map[strin
 	if err != nil {
 		return nil, err
 	}
-	db, err := NewDB(
+	db, err := newServer(
 		peers,
 		dataDir,
 		listen,
@@ -53,7 +53,16 @@ func NewDB(
 	dialer func(string, time.Duration) (net.Conn, error),
 	commands map[string]Command,
 	logOut io.Writer) (DB, error) {
-	lg := log.New(logOut, "flotilla", log.LstdFlags)
+	return newServer(peers, dataDir, listen, dialer, commands, logOut)
+}
+func newServer(
+	peers []string,
+	dataDir string,
+	listen net.Listener,
+	dialer func(string, time.Duration) (net.Conn, error),
+	commands map[string]Command,
+	logOut io.Writer) (*server, error) {
+	lg := log.New(logOut, fmt.Sprintf("flotilla-%s ", listen.Addr().String()), log.LstdFlags)
 	lg.Printf("Starting server with peers %+v, dataDir %s\n", peers, dataDir)
 	raftDir := dataDir + "/raft"
 	mdbDir := dataDir + "/mdb"

@@ -5,12 +5,14 @@ import (
 	mdb "github.com/jbooth/gomdb"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestServer(t *testing.T) {
 
 	// set up cluster of 3
 	servers := make([]DefaultOpsDB, 3)
+	rawServers := make([]*server, 3)
 	addrs := []string{"127.0.0.1:1203", "127.0.0.1:1204", "127.0.0.1:1205"}
 	dataDirs := make([]string, 3)
 	waitingUp := make([]chan error, 3)
@@ -34,6 +36,7 @@ func TestServer(t *testing.T) {
 				addrs[j],
 				cmds,
 			)
+			rawServers[j] = servers[j].(dbOps).server
 			waitingUp[j] <- err
 		}(i)
 		if err != nil {
@@ -139,13 +142,38 @@ func TestServer(t *testing.T) {
 		t.Fatalf("Should have gotten error for command with error")
 	}
 
-	// kill leader, check for new leader
+	// kill leader
 
+	rawServers[leaderIdx].rpcLayer.Close()
+	rawServers[leaderIdx].state.env.e.Close()
+	formerLeaderIdx := leaderIdx
+	servers[formerLeaderIdx] = nil
+	rawServers[formerLeaderIdx] = nil
+	leader = nil
 	// execute some more commands
+	testIdx := formerLeaderIdx + 1%3 // other node in cluster that isn't the one we shut down
+	res = <-servers[testIdx].Put(dbName, []byte("newLeader1"), []byte("newLeader1"))
+	if res.Err != nil {
+		t.Fatalf("Err putting to idx %d after shutting down leader idx %d : %s", testIdx, formerLeaderIdx, res.Err.Error())
+	}
+	// check for new leader
+	time.Sleep(3 * time.Second)
+	for idx, s := range servers {
+		if s != nil && s.IsLeader() {
+			leaderIdx = idx
+			leader = s
+			break
+		}
+	}
+	if leader == nil {
+		t.Fatal("No new leader!")
+	}
 
-	// bring node 0 back up
+	// bring former leader back up
 
-	// execute commands from node 0 (now follower)
+	// execute commands from former leader (now follower)
+
+	// confirm node 0 is up to date
 }
 
 var alwaysReturnsError Command = func(args [][]byte, txn *mdb.Txn) ([]byte, error) {
@@ -179,16 +207,3 @@ func chkPanic(err error) {
 		panic(err)
 	}
 }
-
-//func bytesEqual(a []byte, b []byte) bool {
-//	// both nil is false
-//	if (a == nil || b == nil || len(a) != len(b)) {
-//		return false
-//	}
-//	for idx,v := range a {
-//		if b[idx] != v {
-//			return false
-//		}
-//	}
-//	return true
-//}
