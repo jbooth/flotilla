@@ -32,6 +32,9 @@ func newFlotillaState(dbPath string, commands map[string]Command, addr string, l
 	lg.Printf("New flotilla state at path %s, listening on %s\n", dbPath, addr)
 	// current data stored here
 	dataPath := dbPath + "/data"
+	if err := os.RemoveAll(dataPath); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dataPath, 0755); err != nil {
 		return nil, err
 	}
