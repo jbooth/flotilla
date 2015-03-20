@@ -3,7 +3,7 @@ package flotilla
 import (
 	"errors"
 	"fmt"
-	"github.com/hashicorp/raft"
+	"github.com/jbooth/raft"
 	"log"
 	"net"
 	"time"

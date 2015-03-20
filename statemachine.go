@@ -2,8 +2,8 @@ package flotilla
 
 import (
 	"fmt"
-	"github.com/hashicorp/raft"
 	"github.com/jbooth/gomdb"
+	"github.com/jbooth/raft"
 	"io"
 	"log"
 	"os"
@@ -73,7 +73,7 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	if err != nil {
 		return &Result{nil, err}
 	}
-	f.lg.Printf("Executing command name %s", cmd.Cmd)
+	f.lg.Printf("flotillaState Executing command name %s", cmd.Cmd)
 	// execute command, get results
 	cmdExec, ok := f.commands[cmd.Cmd]
 	result := Result{nil, nil}
@@ -86,13 +86,21 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	// confirm txn handle closed (our txn wrapper keeps track of state so we don't abort committed txn)
 	txn.Abort()
 	// check for callback
-	f.lg.Printf("Finished command %s with result %s err %s", cmd.Cmd, string(result.Response), result.Err)
-	f.l.Lock()
-	defer f.l.Unlock()
-	cb, ok := f.localCallbacks[cmd.Reqno]
-	if ok {
-		cb.result <- result
+	f.lg.Printf("flotillaState Finished command %s with result %s err %s", cmd.Cmd, string(result.Response), result.Err)
+	if cmd.OriginAddr == f.addr {
+		f.lg.Printf("flotillaState finished local command, locking and looking up result for reqno %d", cmd.Reqno)
+		f.l.Lock()
+		defer f.l.Unlock()
+		cb, ok := f.localCallbacks[cmd.Reqno]
+		if ok {
+			f.lg.Printf("flotillaState forwarding result %s of command %s to localCallback for reqno %d", string(result.Response), cmd.Cmd, cmd.Reqno)
+			cb.result <- result
+			f.localCallbacks[cmd.Reqno] = nil
+		} else {
+			f.lg.Printf("ERROR no local callback for commadn that we should have had! reqno %d", cmd.Reqno)
+		}
 	}
+
 	return result
 }
 
@@ -121,6 +129,7 @@ func (f *flotillaState) newCommand() *commandCallback {
 	defer f.l.Unlock()
 	// bump reqno
 	f.reqnoCtr++
+	f.lg.Printf("flotillaState creating new command reqno %d", f.reqnoCtr)
 	ret := &commandCallback{
 		f.addr,
 		f.reqnoCtr,
