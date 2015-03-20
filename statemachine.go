@@ -73,7 +73,8 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	if err != nil {
 		return &Result{nil, err}
 	}
-	f.lg.Printf("flotillaState Executing command name %s", cmd.Cmd)
+	f.lg.Printf("flotillaState got bytes %x", l.Data)
+	f.lg.Printf("flotillaState Executing command name %s from peer %s reqno %d", cmd.Cmd, cmd.OriginAddr, cmd.Reqno)
 	// execute command, get results
 	cmdExec, ok := f.commands[cmd.Cmd]
 	result := Result{nil, nil}
@@ -95,9 +96,9 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 		if ok {
 			f.lg.Printf("flotillaState forwarding result %s of command %s to localCallback for reqno %d", string(result.Response), cmd.Cmd, cmd.Reqno)
 			cb.result <- result
-			f.localCallbacks[cmd.Reqno] = nil
+			delete(f.localCallbacks, cmd.Reqno)
 		} else {
-			f.lg.Printf("ERROR no local callback for commadn that we should have had! reqno %d", cmd.Reqno)
+			f.lg.Printf("ERROR no local callback for command that we should have had! reqno %d", cmd.Reqno)
 		}
 	}
 
@@ -129,10 +130,11 @@ func (f *flotillaState) newCommand() *commandCallback {
 	defer f.l.Unlock()
 	// bump reqno
 	f.reqnoCtr++
+	myReqno := f.reqnoCtr
 	f.lg.Printf("flotillaState creating new command reqno %d", f.reqnoCtr)
 	ret := &commandCallback{
 		f.addr,
-		f.reqnoCtr,
+		myReqno,
 		f,
 		make(chan Result, 1),
 	}

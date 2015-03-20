@@ -2,6 +2,7 @@ package flotilla
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/jbooth/raft"
 	"log"
@@ -64,7 +65,8 @@ func (c *connToLeader) forwardCommand(cb *commandCallback, cmdName string, args 
 	lg := logForCommand(cb.originAddr, cb.reqNo, cmdName, args)
 	// put response chan in pending
 	// send
-	c.lg.Printf("Forwarding command of type %s to leader %s", cmdName, c.c.RemoteAddr().String())
+	c.lg.Printf("Forwarding command of type %s reqno %d to leader %s", cmdName, cb.reqNo, c.c.RemoteAddr().String())
+	c.lg.Printf("Command data %x", lg.Data)
 	err := c.e.Encode(lg)
 	if err != nil {
 		cb.cancel()
@@ -121,12 +123,14 @@ func bytesForCommand(host string, reqno uint64, cmdName string, args [][]byte) [
 }
 
 func logForCommand(host string, reqno uint64, cmdName string, args [][]byte) *raft.Log {
-	return &raft.Log{
+	ret := &raft.Log{
 		Index: 0,
 		Term:  0,
 		Type:  raft.LogCommand,
 		Data:  bytesForCommand(host, reqno, cmdName, args),
 	}
+	fmt.Printf("built log for cmd %s reqno %d host %s: %x", cmdName, reqno, host, ret.Data)
+	return ret
 }
 
 // serves a follower from a leader server
@@ -191,7 +195,6 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 		return
 	}
 	// read commands
-	cmdReq := &raft.Log{}
 	err = nil
 	futures := make(chan raft.ApplyFuture, 16)
 	defer func() {
@@ -201,7 +204,8 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 	}()
 	go sendResponses(futures, lg, encode, follower)
 	for {
-		lg.Printf("Decoding cmd from peer %s", follower.RemoteAddr().String())
+		cmdReq := &raft.Log{}
+		leader.lg.Printf("Decoding cmd from peer %s", follower.RemoteAddr().String())
 		err = decode.Decode(cmdReq)
 		if err != nil {
 			lg.Printf("Error reading command from node %s : '%s', closing conn", follower.RemoteAddr().String(), err.Error())
@@ -209,7 +213,7 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 			return
 		}
 		// exec with leader
-		lg.Printf("Executing command")
+		leader.lg.Printf("Flotilla parsed command %+v", cmdReq)
 		future := leader.raft.Apply(cmdReq.Data, 1*time.Minute)
 		futures <- future
 	}

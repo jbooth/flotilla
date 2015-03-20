@@ -259,7 +259,7 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 	}
 	s.lg.Printf("Creating new command in dispatchToLeader")
 	cb := s.state.newCommand()
-	s.lg.Printf("Forwarding command in dispatchToLeader")
+	s.lg.Printf("Forwarding command %+v in dispatchToLeader", cb)
 	err = s.leaderConn.forwardCommand(cb, cmd, args)
 	if err != nil {
 		cb.cancel()
