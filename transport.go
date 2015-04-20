@@ -2,7 +2,6 @@ package flotilla
 
 import (
 	"bytes"
-	"fmt"
 	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/jbooth/raft"
 	"log"
