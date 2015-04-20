@@ -38,7 +38,6 @@ func newConnToLeader(conn net.Conn, advertiseAddr string, lg *log.Logger) (*conn
 	join := &joinReq{
 		PeerAddr: advertiseAddr,
 	}
-	lg.Printf("Sending join req %+v to leader", join)
 	err := ret.e.Encode(join)
 	if err != nil {
 		ret.c.Close()
@@ -51,7 +50,6 @@ func newConnToLeader(conn net.Conn, advertiseAddr string, lg *log.Logger) (*conn
 		ret.c.Close()
 		return nil, err
 	}
-	lg.Printf("Sent join, returning new conn from newConnToLeader")
 	go ret.readResponses()
 	return ret, nil
 }
@@ -65,8 +63,6 @@ func (c *connToLeader) forwardCommand(cb *commandCallback, cmdName string, args 
 	lg := logForCommand(cb.originAddr, cb.reqNo, cmdName, args)
 	// put response chan in pending
 	// send
-	c.lg.Printf("Forwarding command of type %s reqno %d to leader %s", cmdName, cb.reqNo, c.c.RemoteAddr().String())
-	c.lg.Printf("Command data %x", lg.Data)
 	err := c.e.Encode(lg)
 	if err != nil {
 		cb.cancel()
@@ -129,7 +125,6 @@ func logForCommand(host string, reqno uint64, cmdName string, args [][]byte) *ra
 		Type:  raft.LogCommand,
 		Data:  bytesForCommand(host, reqno, cmdName, args),
 	}
-	fmt.Printf("built log for cmd %s reqno %d host %s: %x", cmdName, reqno, host, ret.Data)
 	return ret
 }
 
@@ -141,7 +136,6 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 	encode := codec.NewEncoder(follower, ch)
 	jReq := &joinReq{}
 	jResp := &joinResp{}
-	lg.Printf("Got connection from %s\n", follower.RemoteAddr().String())
 	err := decode.Decode(jReq)
 	if err != nil {
 		lg.Printf("Error serving follower at %s : %s", follower.RemoteAddr(), err)
@@ -162,7 +156,6 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 			follower.Close()
 			return
 		}
-		lg.Printf("Adding peer %s", peerAddr)
 		addFuture := leader.raft.AddPeer(peerAddr)
 		err = addFuture.Error()
 		if err == raft.ErrKnownPeer {
@@ -205,7 +198,6 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 	go sendResponses(futures, lg, encode, follower)
 	for {
 		cmdReq := &raft.Log{}
-		leader.lg.Printf("Decoding cmd from peer %s", follower.RemoteAddr().String())
 		err = decode.Decode(cmdReq)
 		if err != nil {
 			lg.Printf("Error reading command from node %s : '%s', closing conn", follower.RemoteAddr().String(), err.Error())
@@ -213,7 +205,6 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 			return
 		}
 		// exec with leader
-		leader.lg.Printf("Flotilla parsed command %+v", cmdReq)
 		future := leader.raft.Apply(cmdReq.Data, 1*time.Minute)
 		futures <- future
 	}
@@ -223,7 +214,6 @@ func serveFollower(lg *log.Logger, follower net.Conn, leader *server) {
 func sendResponses(futures chan raft.ApplyFuture, lg *log.Logger, e *codec.Encoder, conn net.Conn) {
 	resp := &commandResp{}
 	for f := range futures {
-		lg.Printf("Sending a response to host %s", conn.RemoteAddr().String())
 		err := f.Error()
 		resp.Err = err
 		err = e.Encode(resp)

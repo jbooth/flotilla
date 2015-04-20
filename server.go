@@ -52,7 +52,6 @@ func NewDB(
 	dialer func(string, time.Duration) (net.Conn, error),
 	commands map[string]Command,
 	lg *log.Logger) (DB, error) {
-	lg.Printf("Starting server with peers %+v, dataDir %s\n", peers, dataDir)
 	raftDir := dataDir + "/raft"
 	mdbDir := dataDir + "/mdb"
 	// make sure dirs exist
@@ -130,7 +129,6 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 	trans := raft.NewNetworkTransportLog(streams, 3, 10*time.Second, lg)
 
 	// Setup the peer store
-	lg.Printf("server.newRaft Resolving peers %+v", peers)
 	peerAddrs := make([]net.Addr, len(peers), len(peers))
 	for idx, p := range peers {
 		peerAddrs[idx], err = net.ResolveTCPAddr("tcp", p)
@@ -138,7 +136,6 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 			return nil, err
 		}
 	}
-	lg.Printf("server.newRaft Setting peer addrs %+v", peerAddrs)
 	raftPeers := raft.NewJSONPeers(path, trans)
 	if err = raftPeers.SetPeers(peerAddrs); err != nil {
 		return nil, err
@@ -210,14 +207,12 @@ var commandTimeout = 1 * time.Minute
 func (s *server) Command(cmd string, args [][]byte) <-chan Result {
 
 	if s.IsLeader() {
-		s.lg.Printf("flotilla server Leader executing command %s, registering callback", cmd)
 		cb := s.state.newCommand()
 		cmdBytes := bytesForCommand(cb.originAddr, cb.reqNo, cmd, args)
 		s.raft.Apply(cmdBytes, commandTimeout)
 		return cb.result
 	}
 	// couldn't exec as leader, fallback to forwarding
-	s.lg.Printf("flotilla server follower forwarding cmd %s", cmd)
 	cb, err := s.dispatchToLeader(cmd, args)
 	if err != nil {
 		if cb != nil {
@@ -249,17 +244,13 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 		if err != nil {
 			return nil, fmt.Errorf("Couldn't connect to leader at %s", s.Leader().String())
 		}
-		s.lg.Printf("Connecting to leader %s from follower %s\n", s.Leader().String(), s.rpcLayer.Addr().String())
 		s.leaderConn, err = newConnToLeader(newConn, s.rpcLayer.Addr().String(), s.lg)
 		if err != nil {
 			s.lg.Printf("Got error connecting to leader %s from follower %s : %s", s.Leader().String(), s.rpcLayer.Addr().String(), err)
 			return nil, err
 		}
-		s.lg.Printf("Connected to leader, reported addr %s connected addr %s", s.Leader(), s.leaderConn.remoteAddr())
 	}
-	s.lg.Printf("Creating new command in dispatchToLeader")
 	cb := s.state.newCommand()
-	s.lg.Printf("Forwarding command %+v in dispatchToLeader", cb)
 	err = s.leaderConn.forwardCommand(cb, cmd, args)
 	if err != nil {
 		cb.cancel()
