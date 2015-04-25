@@ -36,14 +36,14 @@ func newenv(filePath string) (*env, error) {
 }
 
 // opens a read transaction,
-func (e *env) readTxn() (*mdb.Txn, error) {
+func (e *env) readTxn(pinned bool) (*mdb.Txn, error) {
 	e.l.Lock()
 	defer e.l.Unlock()
 	if e.shouldClose {
 		// should never happen
 		return nil, fmt.Errorf("Environment is marked as closing, no new txns allowed!")
 	}
-	t, err := e.e.BeginTxn(nil, mdb.RDONLY)
+	t, err := e.e.BeginTxnR(nil, mdb.RDONLY, pinned)
 	if err != nil {
 		return nil, err
 	}
