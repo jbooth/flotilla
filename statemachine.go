@@ -2,8 +2,8 @@ package flotilla
 
 import (
 	"fmt"
-	"github.com/hashicorp/raft"
 	"github.com/jbooth/gomdb"
+	"github.com/jbooth/raft"
 	"io"
 	"log"
 	"os"
@@ -29,7 +29,7 @@ type flotillaState struct {
 }
 
 func newFlotillaState(dbPath string, commands map[string]Command, addr string, lg *log.Logger) (*flotillaState, error) {
-	lg.Printf("New flotilla state at path %s, listening on %s\n", dbPath, addr)
+	//lg.Printf("New flotilla state at path %s, listening on %s\n", dbPath, addr)
 	// current data stored here
 	dataPath := dbPath + "/data"
 	if err := os.RemoveAll(dataPath); err != nil {
@@ -73,12 +73,10 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	if err != nil {
 		return &Result{nil, err}
 	}
-	f.lg.Printf("Executing command name %s", cmd.Cmd)
 	// execute command, get results
 	cmdExec, ok := f.commands[cmd.Cmd]
 	result := Result{nil, nil}
 	if !ok {
-		f.lg.Printf("Received invalid command %s", cmd.Cmd)
 		result.Err = fmt.Errorf("No command registered with name %s", cmd.Cmd)
 	} else {
 		result.Response, result.Err = cmdExec(cmd.Args, txn)
@@ -86,13 +84,19 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	// confirm txn handle closed (our txn wrapper keeps track of state so we don't abort committed txn)
 	txn.Abort()
 	// check for callback
-	f.lg.Printf("Finished command %s with result %s err %s", cmd.Cmd, string(result.Response), result.Err)
-	f.l.Lock()
-	defer f.l.Unlock()
-	cb, ok := f.localCallbacks[cmd.Reqno]
-	if ok {
-		cb.result <- result
+	//f.lg.Printf("flotillaState Finished command %s with result %s err %s", cmd.Cmd, string(result.Response), result.Err)
+	if cmd.OriginAddr == f.addr {
+		f.l.Lock()
+		defer f.l.Unlock()
+		cb, ok := f.localCallbacks[cmd.Reqno]
+		if ok {
+			cb.result <- result
+			delete(f.localCallbacks, cmd.Reqno)
+		} else {
+			f.lg.Printf("ERROR no local callback for command that we should have had! reqno %d", cmd.Reqno)
+		}
 	}
+
 	return result
 }
 
@@ -121,9 +125,10 @@ func (f *flotillaState) newCommand() *commandCallback {
 	defer f.l.Unlock()
 	// bump reqno
 	f.reqnoCtr++
+	myReqno := f.reqnoCtr
 	ret := &commandCallback{
 		f.addr,
-		f.reqnoCtr,
+		myReqno,
 		f,
 		make(chan Result, 1),
 	}

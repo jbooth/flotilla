@@ -2,10 +2,9 @@ package flotilla
 
 import (
 	"fmt"
-	"github.com/hashicorp/raft"
 	mdb "github.com/jbooth/gomdb"
+	"github.com/jbooth/raft"
 	raftmdb "github.com/jbooth/raft-mdb"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -34,7 +33,7 @@ func NewDefaultDB(peers []string, dataDir string, bindAddr string, ops map[strin
 		listen,
 		defaultDialer,
 		ops,
-		os.Stderr,
+		log.New(os.Stderr, "flotilla", log.LstdFlags),
 	)
 	if err != nil {
 		return nil, err
@@ -52,9 +51,7 @@ func NewDB(
 	listen net.Listener,
 	dialer func(string, time.Duration) (net.Conn, error),
 	commands map[string]Command,
-	logOut io.Writer) (DB, error) {
-	lg := log.New(logOut, "flotilla", log.LstdFlags)
-	lg.Printf("Starting server with peers %+v, dataDir %s\n", peers, dataDir)
+	lg *log.Logger) (DB, error) {
 	raftDir := dataDir + "/raft"
 	mdbDir := dataDir + "/mdb"
 	// make sure dirs exist
@@ -86,7 +83,7 @@ func NewDB(
 		return nil, err
 	}
 	// start raft server
-	raft, err := newRaft(peers, raftDir, streamLayers[dialCodeRaft], state, logOut)
+	raft, err := newRaft(peers, raftDir, streamLayers[dialCodeRaft], state, lg)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +94,7 @@ func NewDB(
 		rpcLayer:   streamLayers[dialCodeFlot],
 		leaderLock: new(sync.Mutex),
 		leaderConn: nil,
-		lg:         log.New(logOut, "flotilla", log.LstdFlags),
+		lg:         lg,
 	}
 	// serve followers
 	go s.serveFollowers()
@@ -114,7 +111,7 @@ type server struct {
 	lg         *log.Logger
 }
 
-func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.FSM, logOut io.Writer) (*raft.Raft, error) {
+func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.FSM, lg *log.Logger) (*raft.Raft, error) {
 	// Create the MDB store for logs and stable storage, retain up to 8gb
 	store, err := raftmdb.NewMDBStoreWithSize(path, 8*1024*1024*1024)
 	if err != nil {
@@ -122,17 +119,16 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 	}
 
 	// Create the snapshot store
-	snapshots, err := raft.NewFileSnapshotStore(path, 1, logOut)
+	snapshots, err := raft.NewFileSnapshotStoreLog(path, 1, lg)
 	if err != nil {
 		store.Close()
 		return nil, err
 	}
 
 	// Create a transport layer
-	trans := raft.NewNetworkTransport(streams, 3, 10*time.Second, logOut)
+	trans := raft.NewNetworkTransportLog(streams, 3, 10*time.Second, lg)
 
 	// Setup the peer store
-	fmt.Fprintf(logOut, "server.newRaft Resolving peers %+v", peers)
 	peerAddrs := make([]net.Addr, len(peers), len(peers))
 	for idx, p := range peers {
 		peerAddrs[idx], err = net.ResolveTCPAddr("tcp", p)
@@ -140,7 +136,6 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 			return nil, err
 		}
 	}
-	fmt.Fprintf(logOut, "server.newRaft Setting peer addrs %+v", peerAddrs)
 	raftPeers := raft.NewJSONPeers(path, trans)
 	if err = raftPeers.SetPeers(peerAddrs); err != nil {
 		return nil, err
@@ -171,7 +166,7 @@ func newRaft(peers []string, path string, streams raft.StreamLayer, state raft.F
 	timeout := time.Now().Add(1 * time.Minute)
 	for {
 		leader := raft.Leader()
-		fmt.Fprintf(logOut, "server.newRaft Identified leader %s from host %s\n", leader, trans.LocalAddr().String())
+		lg.Printf("server.newRaft Identified leader %s from host %s\n", leader, trans.LocalAddr().String())
 		if leader != nil {
 			break
 		} else {
@@ -236,7 +231,11 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 	s.leaderLock.Lock()
 	defer s.leaderLock.Unlock()
 	var err error
-	if s.leaderConn == nil || s.Leader() != s.leaderConn.remoteAddr() {
+	if s.leaderConn == nil || s.Leader().String() != s.leaderConn.remoteAddr().String() {
+		if s.leaderConn != nil {
+			s.lg.Printf("Leader changed, reconnecting, was: %s, now %s", s.leaderConn.remoteAddr(), s.Leader())
+		}
+
 		// reconnect
 		if s.leaderConn != nil {
 			s.leaderConn.c.Close()
@@ -245,17 +244,13 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 		if err != nil {
 			return nil, fmt.Errorf("Couldn't connect to leader at %s", s.Leader().String())
 		}
-		s.lg.Printf("Connecting to leader %s from follower %s\n", s.Leader().String(), s.rpcLayer.Addr().String())
 		s.leaderConn, err = newConnToLeader(newConn, s.rpcLayer.Addr().String(), s.lg)
 		if err != nil {
 			s.lg.Printf("Got error connecting to leader %s from follower %s : %s", s.Leader().String(), s.rpcLayer.Addr().String(), err)
 			return nil, err
 		}
-		s.lg.Printf("Connected to leader, reported addr %s connected addr %s", s.Leader(), s.leaderConn.remoteAddr())
 	}
-	s.lg.Printf("Creating new command in dispatchToLeader")
 	cb := s.state.newCommand()
-	s.lg.Printf("Forwarding command in dispatchToLeader")
 	err = s.leaderConn.forwardCommand(cb, cmd, args)
 	if err != nil {
 		cb.cancel()
