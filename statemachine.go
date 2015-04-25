@@ -96,11 +96,11 @@ func (f *flotillaState) Apply(l *raft.Log) interface{} {
 	return result
 }
 
-func (s *flotillaState) ReadTxn() (*mdb.Txn, error) {
+func (s *flotillaState) ReadTxn(pinned bool) (*mdb.Txn, error) {
 	// lock to make sure we don't race with Restore()
 	s.l.Lock()
 	defer s.l.Unlock()
-	return s.env.readTxn()
+	return s.env.readTxn(pinned)
 }
 
 type commandCallback struct {
