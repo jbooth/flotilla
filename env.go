@@ -25,7 +25,7 @@ func newenv(filePath string) (*env, error) {
 	// TODO make these configurable
 	e.SetMaxReaders(1024)
 	e.SetMaxDBs(1024)
-	e.SetMapSize(32 * 1024 * 1024 * 1024)
+	e.SetMapSize(512 * 1024 * 1024 * 1024)
 	// disable fsync because we are guaranteeing consistency/durability via raft snapshotting and edit logs
 	err = e.Open(filePath, mdb.WRITEMAP|mdb.NOSYNC|mdb.NOTLS, 0766)
 	if err != nil {
