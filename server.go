@@ -231,7 +231,7 @@ func (s *server) dispatchToLeader(cmd string, args [][]byte) (*commandCallback, 
 	s.leaderLock.Lock()
 	defer s.leaderLock.Unlock()
 	var err error
-	if s.leaderConn == nil || s.Leader().String() != s.leaderConn.remoteAddr().String() {
+	if s.leaderConn == nil || s.Leader() == nil || s.Leader().String() != s.leaderConn.remoteAddr().String() {
 		if s.leaderConn != nil {
 			s.lg.Printf("Leader changed, reconnecting, was: %s, now %s", s.leaderConn.remoteAddr(), s.Leader())
 		}
