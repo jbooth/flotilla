@@ -190,6 +190,11 @@ func (s *server) serveFollowers() {
 	}
 }
 
+func (s *server) SetPeers(newPeers []net.Addr) error {
+	return s.raft.SetPeers(newPeers).Error()
+
+}
+
 // returns addr of leader
 func (s *server) Leader() net.Addr {
 	return s.raft.Leader()
