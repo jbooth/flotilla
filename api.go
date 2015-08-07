@@ -48,6 +48,9 @@ type DB interface {
 	// leader addr, same disclaimer as IsLeader()
 	Leader() net.Addr
 
+	// removes a peer if you detected a failure from outside of flotilla
+	RemovePeer(peer net.Addr) error
+
 	// shuts down this instance
 	Close() error
 }

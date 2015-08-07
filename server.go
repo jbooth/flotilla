@@ -190,9 +190,13 @@ func (s *server) serveFollowers() {
 	}
 }
 
-func (s *server) SetPeers(newPeers []net.Addr) error {
-	return s.raft.SetPeers(newPeers).Error()
-
+// only removes if leader, otherwise returns nil
+func (s *server) RemovePeer(deadPeer net.Addr) error {
+	if s.IsLeader() {
+		return s.raft.RemovePeer(deadPeer).Error()
+	} else {
+		return nil
+	}
 }
 
 // returns addr of leader
